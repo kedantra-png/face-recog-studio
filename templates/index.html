@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silent Face Anti-Spoofing Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <div class="shield-icon">🛡️</div>
+                <div>
+                    <h1>Silent Face Anti-Spoofing</h1>
+                    <p class="subtitle">Deep Learning Liveness & Presentation Attack Detection</p>
+                </div>
+            </div>
+            <div class="header-badges">
+                <span class="tech-tag">PyTorch 2.x</span>
+                <span class="tech-tag">RetinaFace</span>
+                <span class="tech-tag highlight">MiniFASNet Ensemble</span>
+            </div>
+        </header>
+
+        <!-- Main Workspace Grid -->
+        <main class="workspace-grid">
+            <!-- Left Panel: Input Modes & Viewport -->
+            <section class="viewport-card glass-panel">
+                <!-- Navigation Tabs -->
+                <nav class="tab-nav">
+                    <button class="tab-btn active" data-tab="upload-tab">
+                        <span class="icon">📁</span> Upload Photo
+                    </button>
+                    <button class="tab-btn" data-tab="webcam-tab">
+                        <span class="icon">📹</span> Live Webcam
+                    </button>
+                    <button class="tab-btn" data-tab="samples-tab">
+                        <span class="icon">🖼️</span> Sample Gallery
+                    </button>
+                </nav>
+
+                <!-- Tab Content: Image Upload -->
+                <div id="upload-tab" class="tab-content active">
+                    <div class="drop-zone" id="drop-zone">
+                        <input type="file" id="file-input" accept="image/*" class="file-input">
+                        <div class="drop-zone-prompt">
+                            <div class="cloud-icon">☁️</div>
+                            <h3>Drag & Drop your photo here</h3>
+                            <p>or <span class="browse-link">browse files</span> from your computer</p>
+                            <span class="support-text">Supports JPG, PNG, WEBP, BMP</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Live Webcam -->
+                <div id="webcam-tab" class="tab-content">
+                    <div class="webcam-container">
+                        <video id="webcam-video" autoplay playsinline muted></video>
+                        <canvas id="webcam-canvas" style="display: none;"></canvas>
+                        <div class="webcam-overlay" id="webcam-overlay">
+                            <div class="scan-line"></div>
+                            <span class="cam-hint">Align face inside frame</span>
+                        </div>
+                    </div>
+                    <div class="webcam-controls">
+                        <button id="btn-toggle-webcam" class="btn btn-primary">
+                            <span>🎥</span> Start Camera
+                        </button>
+                        <button id="btn-snap-webcam" class="btn btn-secondary" disabled>
+                            <span>📸</span> Capture & Detect
+                        </button>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="chk-auto-scan">
+                            <span class="slider"></span>
+                            <span class="label-text">Auto Scan (Continuous)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Preset Samples -->
+                <div id="samples-tab" class="tab-content">
+                    <div class="samples-header">
+                        <h3>Select a Sample Photo</h3>
+                        <p>Click any test image below to evaluate anti-spoofing accuracy</p>
+                    </div>
+                    <div class="samples-grid" id="samples-grid">
+                        <div class="sample-skeleton">Loading sample images...</div>
+                    </div>
+                </div>
+
+                <!-- Active Preview Box -->
+                <div class="preview-box" id="preview-box">
+                    <div class="preview-header">
+                        <span class="preview-title">Input Frame & Detection Box</span>
+                        <span id="img-name-tag" class="img-name-tag">No input loaded</span>
+                    </div>
+                    <div class="image-wrapper">
+                        <img id="main-preview-img" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' fill='%23131722'/><text x='50%25' y='50%25' fill='%234a5568' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='16'>Upload an image or start camera to evaluate</text></svg>" alt="Preview">
+                        <div id="loading-spinner" class="spinner-overlay" style="display: none;">
+                            <div class="spinner"></div>
+                            <span>Analyzing Facial Liveness...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Results & Telemetry -->
+            <section class="results-card glass-panel">
+                <div class="panel-header">
+                    <h2>Anti-Spoofing Analytics</h2>
+                    <span class="live-dot green"></span>
+                </div>
+
+                <!-- Verdict Banner -->
+                <div id="verdict-banner" class="verdict-banner status-neutral">
+                    <div class="verdict-icon" id="verdict-icon">🔍</div>
+                    <div class="verdict-details">
+                        <div class="verdict-title" id="verdict-title">Awaiting Input</div>
+                        <div class="verdict-sub" id="verdict-sub">Upload an image or capture frame</div>
+                    </div>
+                    <div class="verdict-score" id="verdict-score">--%</div>
+                </div>
+
+                <!-- Overall Probability Meter -->
+                <div class="meter-section">
+                    <div class="meter-label">
+                        <span>Real Face Confidence</span>
+                        <span id="real-percentage" class="score-num">0.0%</span>
+                    </div>
+                    <div class="meter-bar-track">
+                        <div id="real-bar" class="meter-bar-fill real" style="width: 0%;"></div>
+                    </div>
+
+                    <div class="meter-label margin-top">
+                        <span>Fake / Spoof Probability</span>
+                        <span id="fake-percentage" class="score-num">0.0%</span>
+                    </div>
+                    <div class="meter-bar-track">
+                        <div id="fake-bar" class="meter-bar-fill fake" style="width: 0%;"></div>
+                    </div>
+                </div>
+
+                <!-- Ensemble Model Breakdown -->
+                <div class="breakdown-section">
+                    <h3>Dual-Scale Ensemble Breakdown</h3>
+                    <div class="models-grid" id="models-grid">
+                        <div class="model-card-empty">No evaluation run yet</div>
+                    </div>
+                </div>
+
+                <!-- Cropped Face Patches -->
+                <div class="patches-section">
+                    <h3>Scale Input Patches</h3>
+                    <div class="patches-grid">
+                        <div class="patch-item">
+                            <span class="patch-label">Scale 2.7 Patch</span>
+                            <div class="patch-img-box">
+                                <img id="patch-scale-27" src="" alt="Patch 2.7" style="display:none;">
+                                <span class="patch-placeholder">N/A</span>
+                            </div>
+                        </div>
+                        <div class="patch-item">
+                            <span class="patch-label">Scale 4.0 Patch</span>
+                            <div class="patch-img-box">
+                                <img id="patch-scale-40" src="" alt="Patch 4.0" style="display:none;">
+                                <span class="patch-placeholder">N/A</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Telemetry & Metrics Footer -->
+                <div class="telemetry-footer">
+                    <div class="metric-item">
+                        <span class="metric-key">Latency</span>
+                        <span class="metric-val" id="val-latency">-- ms</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-key">Face Box</span>
+                        <span class="metric-val" id="val-bbox">--</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-key">Device</span>
+                        <span class="metric-val">CPU/GPU</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

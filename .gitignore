@@ -1,0 +1,66 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extension outputs
+*.o
+*.a
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+*.secret
+
+# Temporary uploads & debug frames
+temp_uploads/
+debug_output/
+*.log
+
+# PyTest / Coverage output
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Heavy Dataset & Trained Weights
+resources/anti_spoof_models/*.pth
+datasets/
+images/sample/*_result.*
+
+# IDE / Editor Settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS System Files
+.DS_Store
+Thumbs.db
