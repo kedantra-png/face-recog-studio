@@ -33,9 +33,10 @@ export interface FrameQualityMetrics {
 }
 
 export interface CandidateFrame {
-  frame_b64: str;
+  frame_b64: string;
   quality_score: number;
   blur_score: number;
+  timestamp?: number;
 }
 
 export interface PersonMetadata {
@@ -76,6 +77,7 @@ export interface RecognitionResult {
   similarity_score: number;
   overall_confidence: number;
   anti_spoof_confidence?: number;
+  spoof_confidence?: number;
   face_quality_score?: number;
   detected_face_b64?: string;
   processing_time_ms?: LatencyBreakdown;

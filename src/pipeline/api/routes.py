@@ -314,12 +314,25 @@ async def clean_databases_endpoint():
         except Exception as e:
             logger.warning(f"Error resetting Qdrant collections: {e}")
 
+    # 3. Clean Temp Uploads & Debug Disk Storage
+    cleaned_disk = []
+    for disk_dir in ["temp_uploads", "debug_output"]:
+        if os.path.exists(disk_dir):
+            try:
+                shutil.rmtree(disk_dir, ignore_errors=True)
+                os.makedirs(disk_dir, exist_ok=True)
+                cleaned_disk.append(disk_dir)
+            except Exception as e:
+                logger.warning(f"Error purging disk directory {disk_dir}: {e}")
+
     return {
         "success": True,
-        "message": "MongoDB databases & Qdrant vector collections successfully reset to clean state.",
+        "message": "MongoDB databases, Qdrant vector collections, and disk storage successfully reset to clean state.",
         "dropped_mongo_dbs": dropped_mongo,
-        "dropped_qdrant_collections": dropped_qdrant
+        "dropped_qdrant_collections": dropped_qdrant,
+        "cleaned_disk_directories": cleaned_disk
     }
+
 
 
 @router.get("/admin/drive-email")

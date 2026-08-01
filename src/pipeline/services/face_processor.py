@@ -37,10 +37,10 @@ ARC_FACE_LANDMARK_TEMPLATE = np.array([
 class FaceProcessor:
     def __init__(self):
         self.app = None
-        self._init_insightface()
+        self._initialized = False
 
     def _init_insightface(self):
-        if not INSIGHTFACE_AVAILABLE:
+        if self._initialized or not INSIGHTFACE_AVAILABLE:
             return
 
         try:
@@ -51,10 +51,12 @@ class FaceProcessor:
             )
             # det_thresh=0.4 ensures small and low-contrast faces are detected accurately
             self.app.prepare(ctx_id=0, det_thresh=settings.FACE_DETECTION_THRESHOLD, det_size=(640, 640))
+            self._initialized = True
             logger.info("InsightFace buffalo_l pipeline initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize InsightFace: {e}")
             self.app = None
+            self._initialized = True
 
     def process_image(self, img: np.ndarray) -> List[Dict[str, Any]]:
         """
@@ -64,11 +66,23 @@ class FaceProcessor:
         if img is None or img.size == 0:
             return []
 
+        if not self._initialized:
+            self._init_insightface()
+
         # Fallback simulation if InsightFace is unavailable
         if self.app is None:
             return self._fallback_processing(img)
 
         try:
+            h, w = img.shape[:2]
+            target_det_size = (1280, 1280) if max(h, w) >= 1000 else (640, 640)
+
+            if hasattr(self.app, 'models') and 'detection' in self.app.models:
+                det_model = self.app.models['detection']
+                if getattr(det_model, 'input_size', None) != target_det_size:
+                    det_model.input_size = target_det_size
+
+
             # Multi-pass robust face detection (BGR, RGB, and relaxed det_thresh)
             faces = self.app.get(img)
 
@@ -77,13 +91,13 @@ class FaceProcessor:
                 faces = self.app.get(rgb_img)
 
             if not faces and hasattr(self.app, 'models') and 'detection' in self.app.models:
-                # Temporarily lower detection threshold for dark/shadowed webcam frames
                 orig_thresh = getattr(self.app.models['detection'], 'det_thresh', 0.30)
                 self.app.models['detection'].det_thresh = 0.15
                 faces = self.app.get(img)
                 if not faces:
                     faces = self.app.get(rgb_img)
                 self.app.models['detection'].det_thresh = orig_thresh
+
 
             processed_faces = []
             for face in faces:
@@ -138,10 +152,10 @@ class FaceProcessor:
     def align_face(self, img: np.ndarray, landmarks: np.ndarray, crop_size: int = 112) -> np.ndarray:
         """
         Performs 5-landmark similarity transformation (rotation, centering, scaling)
-        to align the face into a standard 112x112 crop.
+        to align the face into a standard 112x112 crop with Lanczos-4 Super-Resolution.
         """
         if landmarks is None or len(landmarks) < 5:
-            return cv2.resize(img, (crop_size, crop_size))
+            return cv2.resize(img, (crop_size, crop_size), interpolation=cv2.INTER_LANCZOS4)
 
         try:
             src = landmarks.astype(np.float32)
@@ -149,11 +163,22 @@ class FaceProcessor:
 
             # Calculate similarity transformation matrix
             M = self._umeyama(src, dst, estimate_scale=True)
-            aligned = cv2.warpAffine(img, M[:2], (crop_size, crop_size), borderMode=cv2.BORDER_REFLECT_101)
+            aligned = cv2.warpAffine(img, M[:2], (crop_size, crop_size), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)
+
+            # Apply CLAHE contrast enhancement for small/shadowed group photo face crops
+            if aligned is not None and aligned.size > 0:
+                lab = cv2.cvtColor(aligned, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(4, 4))
+                l = clahe.apply(l)
+                enhanced = cv2.merge((l, a, b))
+                aligned = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
             return aligned
 
         except Exception:
-            return cv2.resize(img, (crop_size, crop_size))
+            return cv2.resize(img, (crop_size, crop_size), interpolation=cv2.INTER_LANCZOS4)
+
 
     def _umeyama(self, src: np.ndarray, dst: np.ndarray, estimate_scale: bool = True) -> np.ndarray:
         """

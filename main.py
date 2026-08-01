@@ -38,7 +38,7 @@ from src.utility import parse_model_name
 from test_model import pad_to_aspect_ratio_3_4
 
 # Load environment configuration variables
-REAL_THRESHOLD = float(os.getenv("REAL_THRESHOLD", "0.50"))
+REAL_THRESHOLD = float(os.getenv("REAL_THRESHOLD", "0.35"))
 MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "resources", "anti_spoof_models"))
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "images", "sample")
 DEVICE_ID = int(os.getenv("DEVICE_ID", "0"))
@@ -261,8 +261,10 @@ def process_image(image: np.ndarray, img_name: str = "uploaded_image") -> Dict[s
     real_prob = float(final_probs[1])
     fake_prob = float(final_probs[0] + final_probs[2])
 
-    # Check decision against REAL_THRESHOLD from .env
-    is_real = (real_prob >= REAL_THRESHOLD)
+    # Direct Comparison Rule: Calculate both real and spoof scores across models.
+    # If spoof_prob >= real_prob, or if any scale model fake_score > real_score, verdict is SPOOF.
+    any_model_spoof_dominant = any(m_data["fake_score"] > m_data["real_score"] for m_data in per_model_scores.values())
+    is_real = (real_prob > fake_prob) and (real_prob >= REAL_THRESHOLD) and (not any_model_spoof_dominant)
     label = 1 if is_real else 0
     score = real_prob if is_real else fake_prob
 

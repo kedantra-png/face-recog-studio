@@ -120,12 +120,11 @@ class ConfidenceService:
                 mongo_meta.get("thumbnail_url") or
                 mongo_meta.get("drive_url") or
                 payload.get("drive_url") or
-                payload.get("face_thumbnail") or
                 payload.get("file_path") or
+                payload.get("face_thumbnail") or
                 ""
             )
             resolved_thumb = resolve_image_thumbnail(raw_thumb)
-
 
             match_entry = {
                 "image_id": image_id,
@@ -136,8 +135,10 @@ class ConfidenceService:
                 "role": mongo_meta.get("role", "Registered Subject"),
                 "department": mongo_meta.get("department", "Organization"),
                 "thumbnail_url": resolved_thumb,
+                "face_crop": payload.get("face_thumbnail", ""),
                 "enrollment_quality": mongo_meta.get("quality_score", 0.85)
             }
+
             re_ranked_matches.append(match_entry)
 
             if weighted_conf > highest_confidence:

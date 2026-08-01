@@ -16,7 +16,9 @@ import psutil
 import asyncio
 import logging
 import uuid
+import base64
 import numpy as np
+
 
 from typing import Dict, Any, List
 from src.pipeline.config import settings
@@ -130,9 +132,20 @@ class WorkerPool:
                 logger.info(f"Duplicate image detected via SHA256 ({sha256_hash}). Skipping backend indexing.")
                 return
 
+        # Guarantee that every file on disk is renamed to unguessable oordhwa_ filename format
+        filename_curr = os.path.basename(file_path)
+        if not filename_curr.startswith("oordhwa_"):
+            from src.pipeline.storage.disk_storage import generate_oordhwa_filename
+            oordhwa_name = generate_oordhwa_filename(filename_curr, sha256_hash)
+            new_path = os.path.join(os.path.dirname(file_path), oordhwa_name)
+            if file_path != new_path and os.path.exists(file_path):
+                if os.path.exists(new_path):
+                    os.remove(new_path)
+                os.rename(file_path, new_path)
+                file_path = new_path
+
         image_id = f"img_{uuid.uuid4().hex[:12]}"
         now = time.time()
-
 
         image_doc = {
             "image_id": image_id,
@@ -142,6 +155,7 @@ class WorkerPool:
             "internal_filename": os.path.basename(file_path),
             "relative_folder": os.path.dirname(relative_path),
             "file_path": file_path,
+
             "sha256": sha256_hash,
             "file_size": file_size,
             "mime_type": mime_type,
@@ -212,14 +226,24 @@ class WorkerPool:
 
                     embedding_vector = face["embedding"]  # 512-d L2 normalized float list
 
+                    aligned_crop = face.get("aligned_crop")
+                    face_thumb_b64 = ""
+                    if aligned_crop is not None and aligned_crop.size > 0:
+                        _, buf = cv2.imencode('.jpg', aligned_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+                        face_thumb_b64 = f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
+
                     payload = {
                         "image_id": image_id,
                         "job_id": job_id,
+                        "person_id": os.path.basename(file_path),
                         "filename": os.path.basename(file_path),
+                        "face_thumbnail": face_thumb_b64,
                         "quality_score": face_q["score"],
                         "confidence": face["confidence"],
                         "created_at": int(time.time())
                     }
+
+
 
                     qdrant_points.append({
                         "id": vector_id,

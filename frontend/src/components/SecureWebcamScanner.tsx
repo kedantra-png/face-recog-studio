@@ -187,18 +187,33 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
                 frame_b64: b64,
                 quality_score: overallScore,
                 blur_score: Math.round(blurScore),
+                timestamp: Date.now(),
               };
 
               setCandidateFrames((prevFrames) => {
                 const updated = [...prevFrames, frameObj];
-                // Once 12 candidate frames collected over stable window -> select top 3 best frames
-                if (updated.length >= 10 && !autoCaptured && !hasFiredRef.current) {
+                // Once 8+ candidate frames collected over stable temporal window -> select 4 temporally spaced best frames
+                if (updated.length >= 8 && !autoCaptured && !hasFiredRef.current) {
                   hasFiredRef.current = true;
                   setAutoCaptured(true);
-                  const sorted = [...updated].sort((a, b) => b.quality_score - a.quality_score);
-                  const best3 = sorted.slice(0, 3);
+                  
+                  // Divide captured frames into 4 temporal windows (Q1, Q2, Q3, Q4) for robust 4-frame anti-spoof evaluation
+                  const total = updated.length;
+                  const qSize = Math.floor(total / 4);
+                  
+                  const q1 = updated.slice(0, qSize);
+                  const q2 = updated.slice(qSize, qSize * 2);
+                  const q3 = updated.slice(qSize * 2, qSize * 3);
+                  const q4 = updated.slice(qSize * 3);
+                  
+                  const best1 = [...q1].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[0];
+                  const best2 = [...q2].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.33)];
+                  const best3 = [...q3].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.66)];
+                  const best4 = [...q4].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[total - 1];
+                  
+                  const best4TimeSpaced = [best1, best2, best3, best4];
                   setTimeout(() => {
-                    onAutoCaptureFrames(best3);
+                    onAutoCaptureFrames(best4TimeSpaced);
                   }, 50);
                 }
                 return updated;

@@ -63,8 +63,92 @@ export const UploadHistoryTable: React.FC = () => {
   }, [fetchHistory]);
 
 
+  const [showClearModal, setShowClearModal] = useState<boolean>(false);
+  const [isClearing, setIsClearing] = useState<boolean>(false);
+  const [clearMessage, setClearMessage] = useState<string | null>(null);
+
+  const handleClearAllData = async () => {
+    setIsClearing(true);
+    setClearMessage(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v2/admin/clean-databases`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (data.success) {
+        setClearMessage('All MongoDB records, Qdrant vectors, and disk storage have been completely cleared!');
+        setTimeout(() => {
+          setShowClearModal(false);
+          setClearMessage(null);
+          fetchHistory();
+        }, 1500);
+      } else {
+        alert(data.message || 'Failed to clear system data');
+      }
+    } catch (err) {
+      alert('Error clearing system data. Check backend status.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
   return (
     <div className="glass-panel p-6 rounded-3xl border border-slate-800/80 shadow-2xl space-y-4">
+      {/* Clear Confirmation Modal */}
+      {showClearModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="glass-panel p-6 max-w-md w-full rounded-3xl border border-red-500/30 shadow-2xl space-y-4 bg-slate-950/90 text-slate-100">
+            <div className="flex items-center space-x-3 text-red-400 border-b border-slate-800 pb-3">
+              <div className="p-2 rounded-2xl bg-red-500/20 border border-red-500/40">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold">Clear All System Data</h3>
+                <p className="text-xs text-red-300/80">Irreversible System Purge Action</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to permanently clear all <strong className="text-red-400">MongoDB databases</strong>, <strong className="text-red-400">Qdrant 512-d vector collections</strong>, and <strong className="text-red-400">temporary upload files</strong>?
+            </p>
+            <p className="text-[11px] text-slate-400 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+              This will reset the pipeline to 0 registered faces so you can re-upload your image batches cleanly.
+            </p>
+
+            {clearMessage && (
+              <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{clearMessage}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                disabled={isClearing}
+                onClick={() => setShowClearModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition border border-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isClearing}
+                onClick={handleClearAllData}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition shadow-lg shadow-red-900/40 flex items-center gap-2 disabled:opacity-50"
+              >
+                {isClearing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Purging System...</span>
+                  </>
+                ) : (
+                  <span>Yes, Wipe All Data</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header & Filter Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div className="flex items-center space-x-2">
@@ -110,8 +194,18 @@ export const UploadHistoryTable: React.FC = () => {
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
+
+          <button
+            onClick={() => setShowClearModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition border border-red-500/30 text-xs font-bold flex items-center gap-1.5 shadow-md shadow-red-950/20"
+            title="Clear All System Data (MongoDB, Qdrant, Disk Storage)"
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>Clear All Data</span>
+          </button>
         </div>
       </div>
+
 
       {/* History Table */}
       <div className="overflow-x-auto">

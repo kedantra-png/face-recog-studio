@@ -166,6 +166,11 @@ def run_batch_test(image_dir, model_dir, device_id, output_dir=None):
     """
     Runs face anti-spoofing test on all images in a directory.
     """
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir, exist_ok=True)
+        print(f"[-] Image directory '{image_dir}' created. Please place test images (.jpg/.png) inside.")
+        return
+
     valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
     image_files = [f for f in os.listdir(image_dir) if f.lower().endswith(valid_exts) and not f.endswith('_result.jpg')]
     

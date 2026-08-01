@@ -186,7 +186,7 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     # STEP 1: Validate Image Structure & JPEG Integrity on Candidate Frames
     t_step1_start = time.time()
     decoded_frames = []
-    for idx, frame_item in enumerate(payload.frames[:3]):  # Best 3 frames
+    for idx, frame_item in enumerate(payload.frames[:5]):  # Process up to 5 candidate frames
         b64_str = frame_item.frame_b64
         if "," in b64_str:
             b64_str = b64_str.split(",")[1]
@@ -224,11 +224,23 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     best_emb_res = None
     best_img_qual = None
     best_score = -1.0
+    candidate_emb_results = []
 
     for candidate in decoded_frames:
         emb_res = embedding_service.extract_embedding(candidate)
         qual = quality_evaluator.evaluate_image_quality(candidate)
-        score = (emb_res.get("confidence", 0.0) * 0.6) + (qual.get("score", 0.0) * 0.4)
+        candidate_emb_results.append(emb_res)
+        
+        face_score = 0.5
+        if emb_res.get("success") and emb_res.get("bbox") and emb_res.get("landmarks"):
+            face_qual = quality_evaluator.evaluate_face_quality(
+                candidate,
+                emb_res["bbox"],
+                np.array(emb_res["landmarks"])
+            )
+            face_score = face_qual.get("score", 0.5)
+
+        score = (emb_res.get("confidence", 0.0) * 0.35) + (qual.get("score", 0.0) * 0.25) + (face_score * 0.40)
         if emb_res.get("success") and score > best_score:
             best_score = score
             best_primary_frame = candidate
@@ -287,10 +299,12 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     save_debug_image(session_id, "stage4_aligned_face", aligned_crop)
     detected_face_b64 = cv2_to_b64(aligned_crop)
 
-    # STEP 4: MiniFASNet Anti-Spoofing Check using InsightFace Face Bounding Box
+    # STEP 4: MiniFASNet Multi-Frame Anti-Spoofing Check
     t_step4_start = time.time()
-    await ws_manager.send_recognition_progress(session_id, "ANTI_SPOOFING", "Running MiniFASNet anti-spoofing verification")
-    anti_spoof_res = anti_spoof_service.predict(primary_frame, face_bbox=face_bbox)
+    num_frames_payload = len(decoded_frames)
+    await ws_manager.send_recognition_progress(session_id, "ANTI_SPOOFING", f"Running MiniFASNet anti-spoofing verification across {num_frames_payload} frame(s)")
+    candidate_bboxes = [emb.get("bbox") if (emb and emb.get("success")) else None for emb in candidate_emb_results]
+    anti_spoof_res = anti_spoof_service.predict_multi_frame(decoded_frames, face_bboxes=candidate_bboxes)
     t_step4_ms = round((time.time() - t_step4_start) * 1000, 2)
 
     # Check for quality issue vs genuine spoof attempt
@@ -302,9 +316,14 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
             "match_found": False,
             "recognition_status": "POOR_QUALITY",
             "message": msg,
+            "person_id": None,
+            "person_metadata": None,
+            "similarity_score": 0.0,
             "face_quality_score": img_qual.get("score", 0.0),
             "anti_spoof_confidence": 0.0,
+            "spoof_confidence": 0.0,
             "overall_confidence": 0.0,
+            "detected_face_b64": detected_face_b64,
             "top_matches": []
         }
 
@@ -322,8 +341,13 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
             "match_found": False,
             "recognition_status": "SPOOF_DETECTED",
             "message": msg,
+            "person_id": None,
+            "person_metadata": None,
+            "similarity_score": 0.0,
             "anti_spoof_confidence": anti_spoof_res.get("real_confidence", 0.0),
+            "spoof_confidence": anti_spoof_res.get("spoof_confidence", round(1.0 - anti_spoof_res.get("real_confidence", 0.0), 4)),
             "overall_confidence": 0.0,
+            "detected_face_b64": detected_face_b64,
             "top_matches": []
         }
 
@@ -331,16 +355,12 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     t_step5_start = time.time()
     await ws_manager.send_recognition_progress(session_id, "EMBEDDING", "Extracting 512-d L2 normalized InsightFace feature vector")
 
-    all_embeddings = []
-    for frame in decoded_frames:
-        res = embedding_service.extract_embedding(frame)
-        if res.get("success") and res.get("embedding"):
-            all_embeddings.append(res["embedding"])
+    all_embeddings = [emb["embedding"] for emb in candidate_emb_results if (emb and emb.get("success") and emb.get("embedding"))]
 
-    if not all_embeddings:
+    if not all_embeddings and emb_res_primary and emb_res_primary.get("embedding"):
         all_embeddings = [emb_res_primary["embedding"]]
 
-    primary_embedding = all_embeddings[0]
+    primary_embedding = all_embeddings[0] if all_embeddings else []
     t_step5_ms = round((time.time() - t_step5_start) * 1000, 2)
 
     # STEP 6: Persistent gRPC Qdrant Nearest-Neighbor Search
@@ -372,7 +392,7 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     print(f"[STEP 1/7] FRAME DECODING & INTEGRITY : Handled in {t_step1_ms:.2f}ms")
     print(f"[STEP 2/7] BEST FRAME EVALUATION    : Handled in {t_step2_ms:.2f}ms (blur={img_qual.get('blur_laplacian', 0):.1f}, qual={img_qual.get('score', 0):.2f})")
     print(f"[STEP 3/7] LANDMARK ALIGNMENT       : Handled in {t_step3_ms:.2f}ms (crop=112x112)")
-    print(f"[STEP 4/7] MINI-FASNET ANTI-SPOOF   : Handled in {t_step4_ms:.2f}ms (real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)")
+    print(f"[STEP 4/7] MINI-FASNET ANTI-SPOOF   : Handled in {t_step4_ms:.2f}ms (evaluated {anti_spoof_res.get('num_frames_evaluated', 1)} frame(s), real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)")
     print(f"[STEP 5/7] INSIGHTFACE EMBEDDING    : Handled in {t_step5_ms:.2f}ms (512-d L2 vector)")
     print(f"[STEP 6/7] QDRANT VECTOR SEARCH     : Handled in {t_step6_ms:.2f}ms ({len(qdrant_matches)} hits >= 45%)")
     print(f"[STEP 7/7] CONFIDENCE RE-RANKING    : Handled in {t_step7_ms:.2f}ms (score={final_result['overall_confidence']}%)")
@@ -403,6 +423,7 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
         "similarity_score": final_result["similarity_score"],
         "overall_confidence": final_result["overall_confidence"],
         "anti_spoof_confidence": anti_spoof_res.get("real_confidence", 0.95),
+        "spoof_confidence": anti_spoof_res.get("spoof_confidence", round(1.0 - anti_spoof_res.get("real_confidence", 0.95), 4)),
         "face_quality_score": img_qual.get("score", 0.85),
         "detected_face_b64": detected_face_b64,
         "processing_time_ms": latency_breakdown,

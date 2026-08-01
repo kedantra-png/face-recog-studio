@@ -59,10 +59,16 @@ class PipelineConfig(BaseSettings):
     REPLAY_NONCE_TTL_SECONDS: int = Field(default=120, env="REPLAY_NONCE_TTL_SECONDS")
 
     # Recognition & Anti-Spoof Thresholds
-    RECOGNITION_SIMILARITY_THRESHOLD: float = Field(default=0.45, env="RECOGNITION_SIMILARITY_THRESHOLD")
+    RECOGNITION_SIMILARITY_THRESHOLD: float = Field(default=0.42, env="RECOGNITION_SIMILARITY_THRESHOLD")
 
 
-    MINI_FASNET_REAL_THRESHOLD: float = Field(default=0.50, env="MINI_FASNET_REAL_THRESHOLD")
+
+
+
+    MINI_FASNET_REAL_THRESHOLD: float = Field(default=0.35, env="MINI_FASNET_REAL_THRESHOLD")
+    MINI_FASNET_MIN_FRAMES: int = Field(default=2, env="MINI_FASNET_MIN_FRAMES")
+    MINI_FASNET_AGGREGATION_METHOD: str = Field(default="mean", env="MINI_FASNET_AGGREGATION_METHOD")
+
     MAX_TOP_MATCHES: int = Field(default=10, env="MAX_TOP_MATCHES")
 
 
