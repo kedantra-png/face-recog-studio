@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { AlertCircle, RefreshCw, Server, Lock } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { ConfigDrawer } from '@/components/ConfigDrawer';
 import { SecureWebcamScanner } from '@/components/SecureWebcamScanner';
 import { RecognitionDashboard } from '@/components/RecognitionDashboard';
 import { useRecognitionSession } from '@/hooks/useRecognitionSession';
-import { CandidateFrame, BackendConfig } from '@/types';
-import { ShieldCheck, Cpu, Database, Sparkles, Lock, RefreshCw, AlertCircle, Server } from 'lucide-react';
+import { DesktopFrameScrubber } from '@/components/DesktopFrameScrubber';
+import { BackendConfig, CandidateFrame } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
@@ -122,6 +123,11 @@ export default function Home() {
             onReset={resetSession}
           />
         )}
+
+        {/* Interactive 3D Video Frame Showcase */}
+        <div className="w-full pt-6 border-t border-slate-800/80">
+          <DesktopFrameScrubber />
+        </div>
       </main>
 
       {/* Footer */}
