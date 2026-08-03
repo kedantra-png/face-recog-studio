@@ -34,6 +34,7 @@ export interface FrameQualityMetrics {
 
 export interface CandidateFrame {
   frame_b64: string;
+  frame_blob?: Blob;
   quality_score: number;
   blur_score: number;
   timestamp?: number;

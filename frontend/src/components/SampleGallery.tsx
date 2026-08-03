@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { getApiBaseUrl } from '@/lib/api';
 import { Image as ImageIcon, Sparkles, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { SampleImage } from '@/types';
 
@@ -37,9 +38,10 @@ export const SampleGallery: React.FC<SampleGalleryProps> = ({
         {samples.map((sample) => {
           const isSelected = selectedFilename === sample.filename;
           const isRealHint = sample.hint === 'Real';
+          const baseUrl = getApiBaseUrl();
           const fullImgUrl = sample.url.startsWith('http')
             ? sample.url
-            : `${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}${sample.url}`;
+            : `${baseUrl}${sample.url}`;
 
           return (
             <button

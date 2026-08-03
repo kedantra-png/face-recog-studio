@@ -24,7 +24,7 @@ logger = logging.getLogger("main")
 # Load environment configuration from .env file
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body
+from fastapi import FastAPI, Request, File, UploadFile, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -42,7 +42,7 @@ REAL_THRESHOLD = float(os.getenv("REAL_THRESHOLD", "0.35"))
 MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "resources", "anti_spoof_models"))
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "images", "sample")
 DEVICE_ID = int(os.getenv("DEVICE_ID", "0"))
-HOST = os.getenv("HOST", "127.0.0.1")
+HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 ALLOWED_CORS_ORIGINS = [
@@ -70,6 +70,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def normalize_double_slashes(request: Request, call_next):
+    """Normalizes any double slashes in incoming request paths from DevTunnels or proxies."""
+    if "//" in request.scope.get("path", ""):
+        request.scope["path"] = request.scope["path"].replace("//", "/")
+    response = await call_next(request)
+    return response
 
 
 from fastapi import Request
@@ -133,12 +141,26 @@ async def recognition_websocket_root(websocket: WebSocket, session_id: str):
 @app.on_event("startup")
 async def startup_event():
     """Startup handler connecting databases, launching worker pool, warming up AI models, and recovering stuck tasks."""
-    await mongo_db.connect()
-    await qdrant_service.connect()
-    await worker_pool.start()
+    try:
+        await mongo_db.connect()
+    except Exception as e:
+        logger.warning(f"MongoDB connection warning on startup: {e}")
+
+    try:
+        await qdrant_service.connect()
+    except Exception as e:
+        logger.warning(f"Qdrant connection warning on startup: {e}")
+
+    try:
+        await worker_pool.start()
+    except Exception as e:
+        logger.warning(f"Worker pool startup warning: {e}")
 
     # Warm up InsightFace embedding engine and MiniFASNet anti-spoof model in RAM
-    embedding_service.warmup()
+    try:
+        embedding_service.warmup()
+    except Exception as e:
+        logger.warning(f"Embedding warmup warning: {e}")
 
 
     # Auto-recover any images stuck in 'queued' state from earlier worker restarts

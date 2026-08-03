@@ -7,15 +7,15 @@ import { ConfigDrawer } from '@/components/ConfigDrawer';
 import { SecureWebcamScanner } from '@/components/SecureWebcamScanner';
 import { RecognitionDashboard } from '@/components/RecognitionDashboard';
 import { useRecognitionSession } from '@/hooks/useRecognitionSession';
-import { DesktopFrameScrubber } from '@/components/DesktopFrameScrubber';
 import { BackendConfig, CandidateFrame } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { fetchBackendConfigWithFallback, getApiBaseUrl } from '@/lib/api';
 
 export default function Home() {
   const [backendConfig, setBackendConfig] = useState<BackendConfig | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConfigOpen, setIsConfigOpen] = useState<boolean>(false);
+  const [activeApiUrl, setActiveApiUrl] = useState<string>('http://127.0.0.1:8000');
 
   const {
     session,
@@ -28,19 +28,14 @@ export default function Home() {
     resetSession,
   } = useRecognitionSession();
 
-  // Connection check with backend
+  // Connection check with backend fallback support
   const fetchConfig = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/config`);
-      if (res.ok) {
-        const data = await res.json();
-        setBackendConfig(data);
-        setIsConnected(true);
-      } else {
-        setIsConnected(false);
-      }
-    } catch (err) {
-      console.warn('FastAPI connection check warning:', err);
+    const res = await fetchBackendConfigWithFallback();
+    if (res) {
+      setBackendConfig(res.config);
+      setActiveApiUrl(res.baseUrl);
+      setIsConnected(true);
+    } else {
       setIsConnected(false);
     }
   }, []);
@@ -77,7 +72,7 @@ export default function Home() {
             <div className="flex items-center space-x-3 text-amber-200">
               <AlertCircle className="w-5 h-5 text-amber-400 animate-pulse" />
               <span className="text-sm font-medium">
-                Backend Server Offline — Connecting to FastAPI Gateway at {API_BASE_URL}...
+                Backend Server Offline — Connecting to FastAPI Gateway at {activeApiUrl}...
               </span>
             </div>
             <button
@@ -123,11 +118,6 @@ export default function Home() {
             onReset={resetSession}
           />
         )}
-
-        {/* Interactive 3D Video Frame Showcase */}
-        <div className="w-full pt-6 border-t border-slate-800/80">
-          <DesktopFrameScrubber />
-        </div>
       </main>
 
       {/* Footer */}

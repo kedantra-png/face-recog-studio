@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Camera, CheckCircle2, AlertTriangle, Cpu, RefreshCw, CircleDot, Upload, Video } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { getApiBaseUrl } from '@/lib/api';
 
 interface SearchDebugResult {
   success: boolean;
@@ -114,7 +113,8 @@ export const DirectSearchDebugger: React.FC = () => {
       const t1 = performance.now();
       console.log(`[FRONTEND STEP 2/4] Transmitting image to POST /api/v2/upload/search-debug...`);
 
-      const response = await fetch(`${API_BASE_URL}/api/v2/upload/search-debug`, {
+      const baseUrl = getApiBaseUrl();
+      const response = await fetch(`${baseUrl}/api/v2/upload/search-debug`, {
         method: 'POST',
         body: formData,
       });

@@ -1,6 +1,7 @@
 'use client';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { getApiBaseUrl } from '@/lib/api';
+
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export interface UploadQueueItem {
@@ -91,7 +92,8 @@ export class ResumableUploader {
     formData.append('file', file);
     formData.append('job_id', jobId);
 
-    const res = await fetch(`${API_BASE_URL}/api/v2/upload/zip`, {
+    const baseUrl = getApiBaseUrl();
+    const res = await fetch(`${baseUrl}/api/v2/upload/zip`, {
       method: 'POST',
       body: formData,
     });
@@ -195,7 +197,8 @@ export class ResumableUploader {
       formData.append('chunk', chunkBlob, item.file.name);
 
       const chunkStartTime = Date.now();
-      const res = await fetch(`${API_BASE_URL}/api/v2/upload/chunk`, {
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/api/v2/upload/chunk`, {
         method: 'POST',
         body: formData,
         signal,

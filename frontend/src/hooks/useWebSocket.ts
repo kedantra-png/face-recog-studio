@@ -1,9 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
+import { getApiBaseUrl } from '@/lib/api';
 
 export interface WebSocketEvent {
   event: string;
@@ -18,7 +16,10 @@ export const useWebSocket = (onMessageReceived?: (event: WebSocketEvent) => void
 
   const connect = useCallback(() => {
     try {
-      const wsUrl = `${WS_BASE_URL}/ws/upload/${clientIdRef.current}`;
+      const baseUrl = getApiBaseUrl();
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = baseUrl.replace(/^https?:\/\//, '');
+      const wsUrl = `${wsProto}//${host}/ws/upload/${clientIdRef.current}`;
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {

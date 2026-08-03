@@ -80,7 +80,7 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
       if (videoRef.current && canvasRef.current && videoRef.current.readyState === 4 && !autoCaptured && !isProcessing) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         if (ctx) {
           canvas.width = video.videoWidth || 640;
@@ -180,47 +180,43 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
 
           // Accumulate candidate frames if usable
           if (usable) {
-            setStableFrameCount((prev) => {
-              const nextCount = prev + 1;
-              const b64 = canvas.toDataURL('image/jpeg', 0.90);
-              const frameObj: CandidateFrame = {
-                frame_b64: b64,
-                quality_score: overallScore,
-                blur_score: Math.round(blurScore),
-                timestamp: Date.now(),
-              };
+            const b64 = canvas.toDataURL('image/jpeg', 0.90);
+            const frameObj: CandidateFrame = {
+              frame_b64: b64,
+              quality_score: overallScore,
+              blur_score: Math.round(blurScore),
+              timestamp: Date.now(),
+            };
 
-              setCandidateFrames((prevFrames) => {
-                const updated = [...prevFrames, frameObj];
-                // Once 8+ candidate frames collected over stable temporal window -> select 4 temporally spaced best frames
-                if (updated.length >= 8 && !autoCaptured && !hasFiredRef.current) {
-                  hasFiredRef.current = true;
-                  setAutoCaptured(true);
-                  
-                  // Divide captured frames into 4 temporal windows (Q1, Q2, Q3, Q4) for robust 4-frame anti-spoof evaluation
-                  const total = updated.length;
-                  const qSize = Math.floor(total / 4);
-                  
-                  const q1 = updated.slice(0, qSize);
-                  const q2 = updated.slice(qSize, qSize * 2);
-                  const q3 = updated.slice(qSize * 2, qSize * 3);
-                  const q4 = updated.slice(qSize * 3);
-                  
-                  const best1 = [...q1].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[0];
-                  const best2 = [...q2].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.33)];
-                  const best3 = [...q3].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.66)];
-                  const best4 = [...q4].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[total - 1];
-                  
-                  const best4TimeSpaced = [best1, best2, best3, best4];
-                  setTimeout(() => {
-                    onAutoCaptureFrames(best4TimeSpaced);
-                  }, 50);
-                }
-                return updated;
-              });
+            setStableFrameCount((prev) => prev + 1);
 
-
-              return nextCount;
+            setCandidateFrames((prevFrames) => {
+              const updated = [...prevFrames, frameObj];
+              // Once 8+ candidate frames collected over stable temporal window -> select 4 temporally spaced best frames
+              if (updated.length >= 8 && !autoCaptured && !hasFiredRef.current) {
+                hasFiredRef.current = true;
+                setAutoCaptured(true);
+                
+                // Divide captured frames into 4 temporal windows (Q1, Q2, Q3, Q4) for robust 4-frame anti-spoof evaluation
+                const total = updated.length;
+                const qSize = Math.floor(total / 4);
+                
+                const q1 = updated.slice(0, qSize);
+                const q2 = updated.slice(qSize, qSize * 2);
+                const q3 = updated.slice(qSize * 2, qSize * 3);
+                const q4 = updated.slice(qSize * 3);
+                
+                const best1 = [...q1].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[0];
+                const best2 = [...q2].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.33)];
+                const best3 = [...q3].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[Math.floor(total * 0.66)];
+                const best4 = [...q4].sort((a, b) => b.quality_score - a.quality_score)[0] || updated[total - 1];
+                
+                const best4TimeSpaced = [best1, best2, best3, best4];
+                setTimeout(() => {
+                  onAutoCaptureFrames(best4TimeSpaced);
+                }, 50);
+              }
+              return updated;
             });
           } else {
             setStableFrameCount(0);

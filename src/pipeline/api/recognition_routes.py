@@ -145,10 +145,12 @@ async def verify_recognition_options():
 
 
 @router.post("/verify")
-async def verify_recognition(request: Request, payload: RecognitionRequest):
+async def verify_recognition(request: Request):
 
     """
     Primary Secure Face Recognition Verification Endpoint.
+    Supports high-performance binary Blob uploads (multipart/form-data)
+    as well as JSON Base64 payloads (application/json).
     Executes security checks, MiniFASNet anti-spoofing, InsightFace 512-d embeddings,
     gRPC Qdrant vector search, and confidence re-ranking.
     """
@@ -156,10 +158,59 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     intelligent_scheduler.register_recognition_start()
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    session_id = payload.session_id
-    timestamp = payload.timestamp
-    nonce = payload.nonce
-    signature = payload.signature
+    content_type = request.headers.get("content-type", "")
+    raw_frame_bytes_list: List[bytes] = []
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        session_id = str(form.get("session_id", ""))
+        try:
+            timestamp = float(form.get("timestamp", time.time()))
+        except (ValueError, TypeError):
+            timestamp = time.time()
+        nonce = str(form.get("nonce", ""))
+        signature = str(form.get("signature", ""))
+
+        uploaded_files = form.getlist("files")
+        if not uploaded_files:
+            single_file = form.get("file")
+            if single_file:
+                uploaded_files = [single_file]
+
+        for file_item in uploaded_files:
+            if hasattr(file_item, "read"):
+                b_bytes = await file_item.read()
+                if b_bytes:
+                    raw_frame_bytes_list.append(b_bytes)
+
+    elif "application/json" in content_type:
+        try:
+            data = await request.json()
+            session_id = str(data.get("session_id", ""))
+            timestamp = float(data.get("timestamp", time.time()))
+            nonce = str(data.get("nonce", ""))
+            signature = str(data.get("signature", ""))
+            frames_data = data.get("frames", [])
+
+            for f_item in frames_data[:5]:
+                b64_str = f_item.get("frame_b64", "") if isinstance(f_item, dict) else ""
+                if "," in b64_str:
+                    b64_str = b64_str.split(",")[1]
+                if b64_str:
+                    try:
+                        raw_frame_bytes_list.append(base64.b64decode(b64_str))
+                    except Exception:
+                        pass
+        except Exception as e:
+            intelligent_scheduler.register_recognition_complete(0.0)
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}")
+    else:
+        intelligent_scheduler.register_recognition_complete(0.0)
+        raise HTTPException(status_code=400, detail="Unsupported Content-Type. Use multipart/form-data or application/json.")
+
+    if not session_id:
+        intelligent_scheduler.register_recognition_complete(0.0)
+        raise HTTPException(status_code=400, detail="Missing required session_id parameter")
 
     # 1. Rate limiting check
     if client_ip not in ("127.0.0.1", "localhost", "::1"):
@@ -186,17 +237,7 @@ async def verify_recognition(request: Request, payload: RecognitionRequest):
     # STEP 1: Validate Image Structure & JPEG Integrity on Candidate Frames
     t_step1_start = time.time()
     decoded_frames = []
-    for idx, frame_item in enumerate(payload.frames[:5]):  # Process up to 5 candidate frames
-        b64_str = frame_item.frame_b64
-        if "," in b64_str:
-            b64_str = b64_str.split(",")[1]
-
-        try:
-            raw_bytes = base64.b64decode(b64_str)
-        except Exception:
-            intelligent_scheduler.register_recognition_complete(0.0)
-            raise HTTPException(status_code=400, detail=f"Frame {idx+1} is not valid base64 encoded data")
-
+    for idx, raw_bytes in enumerate(raw_frame_bytes_list[:5]):  # Process up to 5 candidate frames
         valid_img, cv_img, img_err = security_service.validate_image_integrity(raw_bytes)
         if not valid_img or cv_img is None:
             await ws_manager.send_recognition_progress(session_id, "POOR_QUALITY", img_err)

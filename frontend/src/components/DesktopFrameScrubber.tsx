@@ -43,10 +43,11 @@ export const DesktopFrameScrubber: React.FC = () => {
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastTimeRef = useRef<number>(0);
 
-  // Pre-load all 56 WebP frame images into memory
+  // Pre-load WebP frame images into memory with fallback state
   useEffect(() => {
     let isMounted = true;
     let loadedCount = 0;
+    let successCount = 0;
     const loadedImages: HTMLImageElement[] = [];
 
     FRAME_PATHS.forEach((path, index) => {
@@ -55,6 +56,7 @@ export const DesktopFrameScrubber: React.FC = () => {
       img.onload = () => {
         if (!isMounted) return;
         loadedCount += 1;
+        successCount += 1;
         loadedImages[index] = img;
         setLoadProgress(Math.round((loadedCount / TOTAL_FRAMES) * 100));
 
@@ -79,6 +81,95 @@ export const DesktopFrameScrubber: React.FC = () => {
     };
   }, []);
 
+  // Procedural 3D Cybernetic Face Mesh Fallback Generator
+  const drawProceduralFaceMesh = (ctx: CanvasRenderingContext2D, width: number, height: number, frameIndex: number) => {
+    ctx.clearRect(0, 0, width, height);
+
+    // Background Gradient
+    const bgGrad = ctx.createRadialGradient(width / 2, height / 2, 50, width / 2, height / 2, width / 1.5);
+    bgGrad.addColorStop(0, '#0d1527');
+    bgGrad.addColorStop(1, '#050810');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, width, height);
+
+    const angle = (frameIndex / TOTAL_FRAMES) * Math.PI * 2;
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(width, height) * 0.32;
+
+    // Draw Cybernetic Grid Rings
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.1, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.25, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 3D Rotating Face Nodes & Connections
+    const nodes = [
+      { x: 0, y: -0.8, z: 0 },
+      { x: -0.4, y: -0.4, z: 0.3 },
+      { x: 0.4, y: -0.4, z: 0.3 },
+      { x: 0, y: -0.2, z: 0.6 },
+      { x: -0.3, y: 0.1, z: 0.4 },
+      { x: 0.3, y: 0.1, z: 0.4 },
+      { x: 0, y: 0.3, z: 0.5 },
+      { x: -0.5, y: 0.4, z: 0.1 },
+      { x: 0.5, y: 0.4, z: 0.1 },
+      { x: 0, y: 0.7, z: 0.2 },
+    ];
+
+    const projectedNodes = nodes.map((n) => {
+      const rx = n.x * Math.cos(angle) - n.z * Math.sin(angle);
+      const rz = n.x * Math.sin(angle) + n.z * Math.cos(angle);
+      const scale = 1 / (1 - rz * 0.3);
+      return {
+        px: cx + rx * radius * scale,
+        py: cy + n.y * radius * scale,
+        scale,
+        rz,
+      };
+    });
+
+    // Draw Connecting Lines
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+    ctx.beginPath();
+    for (let i = 0; i < projectedNodes.length; i++) {
+      for (let j = i + 1; j < projectedNodes.length; j++) {
+        const p1 = projectedNodes[i];
+        const p2 = projectedNodes[j];
+        const dist = Math.hypot(p1.px - p2.px, p1.py - p2.py);
+        if (dist < radius * 0.85) {
+          ctx.moveTo(p1.px, p1.py);
+          ctx.lineTo(p2.px, p2.py);
+        }
+      }
+    }
+    ctx.stroke();
+
+    // Draw Nodes
+    projectedNodes.forEach((p) => {
+      ctx.fillStyle = p.rz > 0 ? '#10b981' : '#06b6d4';
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, 3.5 * p.scale, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Scanning Laser Line
+    const scanY = cy + Math.sin(angle * 2) * radius * 0.9;
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - radius * 1.1, scanY);
+    ctx.lineTo(cx + radius * 1.1, scanY);
+    ctx.stroke();
+  };
+
   // Draw target frame onto HTML5 Canvas
   const drawFrame = useCallback((frameIndex: number) => {
     const canvas = canvasRef.current;
@@ -87,11 +178,6 @@ export const DesktopFrameScrubber: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const images = imagesRef.current;
-    const img = images[frameIndex];
-    if (!img || !img.complete || img.naturalWidth === 0) return;
-
-    // Handle High-DPI Canvas Scaling
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
@@ -102,28 +188,36 @@ export const DesktopFrameScrubber: React.FC = () => {
 
     ctx.save();
     ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    // Calculate aspect ratio cover / contain fit
-    const imgAspect = img.naturalWidth / img.naturalHeight;
-    const canvasAspect = rect.width / rect.height;
+    const images = imagesRef.current;
+    const img = images[frameIndex];
 
-    let drawW = rect.width;
-    let drawH = rect.height;
-    let drawX = 0;
-    let drawY = 0;
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      const imgAspect = img.naturalWidth / img.naturalHeight;
+      const canvasAspect = rect.width / rect.height;
 
-    if (imgAspect > canvasAspect) {
-      drawH = rect.width / imgAspect;
-      drawY = (rect.height - drawH) / 2;
+      let drawW = rect.width;
+      let drawH = rect.height;
+      let drawX = 0;
+      let drawY = 0;
+
+      if (imgAspect > canvasAspect) {
+        drawH = rect.width / imgAspect;
+        drawY = (rect.height - drawH) / 2;
+      } else {
+        drawW = rect.height * imgAspect;
+        drawX = (rect.width - drawW) / 2;
+      }
+
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } else {
-      drawW = rect.height * imgAspect;
-      drawX = (rect.width - drawW) / 2;
+      // Fallback: Render procedural 3D face mesh animation
+      drawProceduralFaceMesh(ctx, rect.width, rect.height, frameIndex);
     }
 
-    ctx.drawImage(img, drawX, drawY, drawW, drawH);
     ctx.restore();
   }, []);
 

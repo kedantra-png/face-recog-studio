@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { RecognitionSession, RecognitionResult, RecognitionProgressEvent, CandidateFrame } from '@/types';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { getApiBaseUrl, base64ToBlob } from '@/lib/api';
 
 async function sha256Hex(str: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -36,7 +35,8 @@ export function useRecognitionSession() {
 
   const initSession = useCallback(async (): Promise<RecognitionSession | null> => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v2/recognition/session`, { method: 'POST' });
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/api/v2/recognition/session`, { method: 'POST' });
       if (!res.ok) {
         throw new Error(`Failed to initialize session: ${res.statusText}`);
       }
@@ -52,8 +52,9 @@ export function useRecognitionSession() {
         setSession(newSession);
 
         // Open WebSocket connection
+        const baseUrl = getApiBaseUrl();
         const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = API_BASE_URL.replace(/^https?:\/\//, '');
+        const host = baseUrl.replace(/^https?:\/\//, '');
         const wsUrl = `${wsProto}//${host}/api/v2/ws/recognition/${newSession.session_id}`;
 
         if (wsRef.current) {
@@ -120,7 +121,7 @@ export function useRecognitionSession() {
 
         const timestamp = Date.now() / 1000;
         const nonce = activeSession.nonce;
-        const rawFramesStr = candidateFrames.map((f) => f.frame_b64.slice(0, 30)).join('');
+        const rawFramesStr = candidateFrames.map((f) => (f.frame_b64 || '').slice(0, 30)).join('');
         const payloadHash = await sha256Hex(rawFramesStr);
 
         const signature = await hmacSha256Hex(
@@ -128,16 +129,21 @@ export function useRecognitionSession() {
           `${activeSession.session_id}:${timestamp}:${nonce}:${payloadHash}`
         );
 
-        const response = await fetch(`${API_BASE_URL}/api/v2/recognition/verify`, {
+        const baseUrl = getApiBaseUrl();
+        const formData = new FormData();
+        formData.append('session_id', activeSession.session_id);
+        formData.append('timestamp', timestamp.toString());
+        formData.append('nonce', nonce);
+        formData.append('signature', signature);
+
+        candidateFrames.forEach((f, idx) => {
+          const blob = f.frame_blob instanceof Blob ? f.frame_blob : base64ToBlob(f.frame_b64);
+          formData.append('files', blob, `frame_${idx}.jpg`);
+        });
+
+        const response = await fetch(`${baseUrl}/api/v2/recognition/verify`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: activeSession.session_id,
-            timestamp,
-            nonce,
-            signature,
-            frames: candidateFrames,
-          }),
+          body: formData, // Browser sets multipart/form-data boundary automatically
         });
 
         if (!response.ok) {

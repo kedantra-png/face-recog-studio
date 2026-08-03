@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, ExternalLink, ShieldCheck, CheckCircle2, AlertTriangle, Layers, RefreshCw } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { getApiBaseUrl } from '@/lib/api';
 
 export interface ImageMetadataRecord {
   image_id: str;
@@ -33,7 +32,8 @@ export const UploadHistoryTable: React.FC = () => {
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
     try {
-      const url = new URL(`${API_BASE_URL}/api/v2/uploads`);
+      const baseUrl = getApiBaseUrl();
+      const url = new URL(`${baseUrl}/api/v2/uploads`);
       url.searchParams.append('page', page.toString());
       url.searchParams.append('limit', '10');
       if (searchQuery) url.searchParams.append('query', searchQuery);
