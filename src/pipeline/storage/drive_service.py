@@ -103,10 +103,75 @@ class GoogleDriveService:
             fields="id, webViewLink, webContentLink"
         ).execute()
 
+        file_id = drive_file.get("id")
+
+        # Make file readable by anyone with link for zero-auth CDN rendering
+        try:
+            self.service.permissions().create(
+                fileId=file_id,
+                body={"type": "anyone", "role": "reader"}
+            ).execute()
+        except Exception as perm_err:
+            logger.warning(f"Failed to set Google Drive permissions to anyone for file {file_id}: {perm_err}")
+
         return {
-            "drive_file_id": drive_file.get("id"),
-            "drive_url": drive_file.get("webViewLink") or drive_file.get("webContentLink") or f"https://drive.google.com/file/d/{drive_file.get('id')}/view"
+            "drive_file_id": file_id,
+            "drive_url": drive_file.get("webViewLink") or drive_file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
         }
+
+    async def download_file_bytes(self, drive_file_id: str) -> Optional[bytes]:
+        """
+        Asynchronously downloads file content as binary bytes from Google Drive.
+        """
+        if not self.service or not drive_file_id:
+            return None
+
+        try:
+            loop = asyncio.get_event_loop()
+            content = await loop.run_in_executor(
+                None,
+                lambda: self.service.files().get_media(fileId=drive_file_id).execute()
+            )
+            return content
+        except Exception as e:
+            logger.error(f"Failed to download bytes from Google Drive for file ID {drive_file_id}: {e}")
+            return None
+
+    async def search_file_by_name(self, filename: str) -> Optional[Dict[str, str]]:
+        """
+        Queries Google Drive for a file matching filename.
+        Returns dict containing drive_file_id and drive_url if found.
+        """
+        if not self.service or not filename:
+            return None
+
+        try:
+            query = f"name = '{filename}' and trashed = false"
+            if self.parent_folder_id:
+                query += f" and '{self.parent_folder_id}' in parents"
+
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(
+                None,
+                lambda: self.service.files().list(
+                    q=query,
+                    fields="files(id, name, webViewLink, webContentLink)",
+                    pageSize=1
+                ).execute()
+            )
+            files = res.get("files", [])
+            if files:
+                f = files[0]
+                file_id = f.get("id")
+                return {
+                    "drive_file_id": file_id,
+                    "drive_url": f.get("webViewLink") or f.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
+                }
+        except Exception as e:
+            logger.warning(f"Error searching Google Drive for file {filename}: {e}")
+
+        return None
 
 
 drive_service = GoogleDriveService()
+

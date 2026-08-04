@@ -26,7 +26,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 from fastapi import FastAPI, Request, File, UploadFile, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
 # Ensure repository root is in python path
@@ -36,6 +36,7 @@ from src.anti_spoof_predict import AntiSpoofPredict
 from src.generate_patches import CropImage
 from src.utility import parse_model_name
 from test_model import pad_to_aspect_ratio_3_4
+from src.pipeline.storage.drive_service import drive_service
 
 # Load environment configuration variables
 REAL_THRESHOLD = float(os.getenv("REAL_THRESHOLD", "0.35"))
@@ -371,6 +372,81 @@ def serve_sample_image(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Sample image not found")
     return FileResponse(file_path)
+
+
+@app.get("/temp_uploads/{path:path}")
+async def serve_or_fetch_temp_upload(path: str):
+    """
+    Serves uploaded images from local disk if present.
+    If local file is missing, queries MongoDB / Google Drive API to download and serve the file seamlessly.
+    """
+    clean_relative = path.replace("\\", "/").strip("/")
+    local_path = os.path.join("temp_uploads", clean_relative)
+
+    # 1. Local disk hit
+    if os.path.exists(local_path) and os.path.isfile(local_path):
+        return FileResponse(local_path)
+
+    alt_local_path = os.path.join(os.getcwd(), "temp_uploads", clean_relative)
+    if os.path.exists(alt_local_path) and os.path.isfile(alt_local_path):
+        return FileResponse(alt_local_path)
+
+    filename = os.path.basename(clean_relative)
+    drive_file_id = None
+    drive_url = None
+
+    # 2. Query MongoDB for file metadata & drive_file_id
+    if mongo_db.db is not None:
+        try:
+            doc = await mongo_db.db.image_metadata.find_one({
+                "$or": [
+                    {"internal_filename": filename},
+                    {"original_filename": filename},
+                    {"file_path": {"$regex": filename}}
+                ]
+            })
+            if doc:
+                drive_file_id = doc.get("drive_file_id")
+                drive_url = doc.get("drive_url")
+        except Exception as err:
+            logger.warning(f"Error searching MongoDB for file {filename}: {err}")
+
+    # 3. Fallback: Search Google Drive by filename directly if not found in MongoDB
+    if not drive_file_id and drive_service.service:
+        drive_res = await drive_service.search_file_by_name(filename)
+        if drive_res:
+            drive_file_id = drive_res.get("drive_file_id")
+            drive_url = drive_res.get("drive_url")
+
+    # 4. Download file from Google Drive if drive_file_id is available
+    if drive_file_id and drive_service.service:
+        content_bytes = await drive_service.download_file_bytes(drive_file_id)
+        if content_bytes:
+            try:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                with open(local_path, "wb") as f:
+                    f.write(content_bytes)
+            except Exception as cache_err:
+                logger.warning(f"Failed to cache downloaded file to local disk: {cache_err}")
+
+            mime_type = "image/jpeg"
+            if filename.lower().endswith(".png"):
+                mime_type = "image/png"
+            elif filename.lower().endswith(".webp"):
+                mime_type = "image/webp"
+
+            return Response(content=content_bytes, media_type=mime_type)
+
+    # 5. If drive_url is a direct view link, redirect
+    if drive_url and ("drive.google.com" in drive_url or "googleusercontent.com" in drive_url):
+        if "/file/d/" in drive_url:
+            d_id = drive_url.split("/file/d/")[1].split("/")[0]
+            cdn_url = f"https://lh3.googleusercontent.com/d/{d_id}=s0"
+            return RedirectResponse(url=cdn_url)
+
+    logger.warning(f"File not found on local disk or Google Drive: {path}")
+    raise HTTPException(status_code=404, detail="Image file not found on local storage or Google Drive")
+
 
 
 from fastapi import FastAPI, HTTPException, Request

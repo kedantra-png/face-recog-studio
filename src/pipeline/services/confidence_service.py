@@ -180,12 +180,14 @@ class ConfidenceService:
                 {"$or": [{"image_id": image_id}, {"person_id": person_id}]}
             )
             if doc:
-                raw_path = doc.get("file_path") or doc.get("relative_folder") or ""
+                raw_path = doc.get("drive_url") or doc.get("file_path") or doc.get("relative_folder") or ""
                 return {
                     "person_name": doc.get("person_name", doc.get("original_filename", person_id)),
                     "role": doc.get("role", "Verified User"),
                     "department": doc.get("department", "Security Division"),
                     "thumbnail_url": raw_path,
+                    "drive_url": doc.get("drive_url"),
+                    "drive_file_id": doc.get("drive_file_id"),
                     "quality_score": doc.get("quality_score", 0.90)
                 }
         except Exception as e:

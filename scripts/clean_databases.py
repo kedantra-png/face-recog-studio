@@ -133,12 +133,64 @@ def clean_local_temp_files():
 
 
 async def main():
-    logger.info("=== STARTING FULL PIPELINE DATABASE & VECTOR CLEANUP ===")
+    logger.info("=== STARTING FULL PIPELINE DATABASE, VECTOR & DRIVE CLEANUP ===")
     await clean_mongodb()
     await clean_qdrant()
+    await clean_google_drive()
     clean_local_temp_files()
-    logger.info("=== CLEANUP COMPLETE: MongoDB & Qdrant are 100% reset! ===")
+    logger.info("=== CLEANUP COMPLETE: MongoDB, Qdrant & Google Drive are 100% reset! ===")
+
+
+async def clean_google_drive():
+    """Deletes all uploaded files inside the configured Google Drive parent folder."""
+    logger.info("--- Cleaning Google Drive Storage ---")
+    try:
+        sys.path.insert(0, os.getcwd())
+        from src.pipeline.storage.drive_service import drive_service
+
+        if not drive_service.service:
+            logger.info("Google Drive service not available (Skipped)")
+            return
+
+        parent_id = drive_service.parent_folder_id
+        if not parent_id:
+            logger.info("No parent folder ID set for Google Drive (Skipped)")
+            return
+
+        loop = asyncio.get_event_loop()
+        query = f"'{parent_id}' in parents and trashed = false"
+        res = await loop.run_in_executor(
+            None,
+            lambda: drive_service.service.files().list(
+                q=query,
+                fields="files(id, name)",
+                pageSize=1000
+            ).execute()
+        )
+
+        files = res.get("files", [])
+        logger.info(f"Found {len(files)} file(s) in Google Drive folder '{parent_id}' to purge.")
+
+        deleted_count = 0
+        for f in files:
+            file_id = f.get("id")
+            fname = f.get("name")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda fid=file_id: drive_service.service.files().delete(fileId=fid).execute()
+                )
+                deleted_count += 1
+                logger.info(f"Deleted Google Drive file: '{fname}' (ID: {file_id})")
+            except Exception as del_err:
+                logger.warning(f"Failed to delete Google Drive file '{fname}': {del_err}")
+
+        logger.info(f"Successfully purged {deleted_count} file(s) from Google Drive.")
+
+    except Exception as e:
+        logger.error(f"Error cleaning Google Drive storage: {e}")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+

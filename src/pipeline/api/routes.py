@@ -325,12 +325,39 @@ async def clean_databases_endpoint():
             except Exception as e:
                 logger.warning(f"Error purging disk directory {disk_dir}: {e}")
 
+    # 4. Clean Google Drive Files
+    cleaned_drive_files = 0
+    try:
+        from src.pipeline.storage.drive_service import drive_service
+        if drive_service and drive_service.service and drive_service.parent_folder_id:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            query = f"'{drive_service.parent_folder_id}' in parents and trashed = false"
+            res = await loop.run_in_executor(
+                None,
+                lambda: drive_service.service.files().list(q=query, fields="files(id, name)", pageSize=1000).execute()
+            )
+            files = res.get("files", [])
+            for f in files:
+                fid = f.get("id")
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        lambda file_id=fid: drive_service.service.files().delete(fileId=file_id).execute()
+                    )
+                    cleaned_drive_files += 1
+                except Exception as del_err:
+                    logger.warning(f"Error deleting drive file {fid}: {del_err}")
+    except Exception as drive_err:
+        logger.warning(f"Error cleaning Google Drive storage: {drive_err}")
+
     return {
         "success": True,
-        "message": "MongoDB databases, Qdrant vector collections, and disk storage successfully reset to clean state.",
+        "message": "MongoDB databases, Qdrant vector collections, disk storage, and Google Drive files successfully reset to clean state.",
         "dropped_mongo_dbs": dropped_mongo,
         "dropped_qdrant_collections": dropped_qdrant,
-        "cleaned_disk_directories": cleaned_disk
+        "cleaned_disk_directories": cleaned_disk,
+        "cleaned_google_drive_files": cleaned_drive_files
     }
 
 
