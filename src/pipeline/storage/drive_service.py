@@ -29,6 +29,9 @@ class GoogleDriveService:
     def __init__(self):
         self.service = None
         self.parent_folder_id = settings.GOOGLE_DRIVE_PARENT_FOLDER_ID
+        self.health_status: str = "HEALTHY"
+        self.last_error_message: str = ""
+        self.last_error_time: float = 0.0
         self._init_service()
 
     def _init_service(self):
@@ -51,25 +54,54 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Failed to initialize Google Drive service: {e}")
             self.service = None
+            self.health_status = "FAILED"
+            self.last_error_message = f"Initialization error: {e}"
+
+    def get_health_status(self) -> Dict[str, Any]:
+        return {
+            "status": self.health_status,
+            "error_message": self.last_error_message,
+            "failed_at": self.last_error_time,
+            "configured": bool(self.service)
+        }
+
+    def reset_health_status(self):
+        self.health_status = "HEALTHY"
+        self.last_error_message = ""
+        self.last_error_time = 0.0
+        try:
+            from src.pipeline.db.mongo import mongo_db
+            if mongo_db.db is not None:
+                asyncio.create_task(mongo_db.db.system_health.update_one(
+                    {"component": "google_drive"},
+                    {"$set": {
+                        "component": "google_drive",
+                        "status": "HEALTHY",
+                        "error_message": "",
+                        "updated_at": time.time()
+                    }},
+                    upsert=True
+                ))
+        except Exception:
+            pass
 
     async def upload_file(self, file_path: str, filename: str, mime_type: str = "image/jpeg") -> Optional[Dict[str, str]]:
         """
-        Asynchronously uploads an original image file to Google Drive with retries.
-        Returns dict containing drive_file_id and drive_url.
+        Asynchronously uploads an original image file to Google Drive.
+        On failure, automatically marks health status as FAILED, logs system_health,
+        and returns local disk storage fallback.
         """
         if not self.service or not os.path.exists(file_path):
-            # Fallback mock drive response if drive is not configured
             return {
                 "drive_file_id": f"local_{int(time.time())}",
                 "drive_url": f"file://{os.path.abspath(file_path)}"
             }
 
-        max_retries = 3
-        backoff = 2.0
+        max_retries = 5
+        backoff = 1.0
 
         for attempt in range(1, max_retries + 1):
             try:
-                # Execute in executor thread to prevent blocking asyncio loop
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
@@ -80,14 +112,46 @@ class GoogleDriveService:
                 )
                 return result
             except Exception as e:
-                logger.warning(f"Google Drive upload attempt {attempt} failed for {filename}: {e}")
-                if attempt == max_retries:
-                    logger.error(f"Google Drive upload permanently failed for {filename}")
-                    raise e
-                await asyncio.sleep(backoff)
-                backoff *= 2.0
+                err_msg = str(e)
+                logger.warning(f"Google Drive upload attempt {attempt}/5 failed for {filename}: {err_msg}")
+                
+                # Mark drive failure state & log to MongoDB system_health
+                self.health_status = "FAILED"
+                self.last_error_message = err_msg
+                self.last_error_time = time.time()
 
-        return None
+                try:
+                    from src.pipeline.db.mongo import mongo_db
+                    if mongo_db.db is not None:
+                        asyncio.create_task(mongo_db.db.system_health.update_one(
+                            {"component": "google_drive"},
+                            {"$set": {
+                                "component": "google_drive",
+                                "status": "FAILED",
+                                "error_message": err_msg,
+                                "failed_at": time.time(),
+                                "attempt": attempt,
+                                "fallback_mode": "LOCAL_STORAGE" if attempt == max_retries else "RETRYING"
+                            }},
+                            upsert=True
+                        ))
+                except Exception as db_err:
+                    logger.warning(f"Failed to record drive health failure to MongoDB: {db_err}")
+
+                if attempt == max_retries:
+                    logger.warning(f"Google Drive upload failed after 5 attempts for {filename}. Falling back to Local Disk Storage.")
+                    return {
+                        "drive_file_id": None,
+                        "drive_url": None,
+                        "file_path": file_path
+                    }
+                await asyncio.sleep(backoff)
+
+        return {
+            "drive_file_id": None,
+            "drive_url": None,
+            "file_path": file_path
+        }
 
     def _execute_upload(self, file_path: str, filename: str, mime_type: str) -> Dict[str, str]:
         file_metadata = {
@@ -114,9 +178,11 @@ class GoogleDriveService:
         except Exception as perm_err:
             logger.warning(f"Failed to set Google Drive permissions to anyone for file {file_id}: {perm_err}")
 
+        cdn_url = f"https://lh3.googleusercontent.com/d/{file_id}=s0"
         return {
             "drive_file_id": file_id,
-            "drive_url": drive_file.get("webViewLink") or drive_file.get("webContentLink") or f"https://drive.google.com/file/d/{file_id}/view"
+            "drive_url": cdn_url,
+            "file_path": file_path
         }
 
     async def download_file_bytes(self, drive_file_id: str) -> Optional[bytes]:

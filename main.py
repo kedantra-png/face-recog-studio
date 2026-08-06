@@ -32,17 +32,14 @@ from pydantic import BaseModel
 # Ensure repository root is in python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.anti_spoof_predict import AntiSpoofPredict
-from src.generate_patches import CropImage
-from src.utility import parse_model_name
-from test_model import pad_to_aspect_ratio_3_4
+from src.pipeline.config import settings
 from src.pipeline.storage.drive_service import drive_service
 
 # Load environment configuration variables
 REAL_THRESHOLD = float(os.getenv("REAL_THRESHOLD", "0.35"))
-MODEL_DIR = os.getenv("MODEL_DIR", os.path.join(os.path.dirname(__file__), "resources", "anti_spoof_models"))
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "resources", "anti_spoof_models")
+DEVICE_ID = 0
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "images", "sample")
-DEVICE_ID = int(os.getenv("DEVICE_ID", "0"))
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
@@ -57,17 +54,86 @@ ALLOWED_CORS_ORIGINS = [
 CORS_ORIGINS = ALLOWED_CORS_ORIGINS
 
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan handler connecting databases, warming up AI models, recovering stuck tasks, and performing graceful shutdown."""
+    try:
+        await mongo_db.connect()
+    except Exception as e:
+        logger.warning(f"MongoDB connection warning on startup: {e}")
+
+    try:
+        await qdrant_service.connect()
+    except Exception as e:
+        logger.warning(f"Qdrant connection warning on startup: {e}")
+
+    try:
+        await worker_pool.start()
+    except Exception as e:
+        logger.warning(f"Worker pool startup warning: {e}")
+
+    # Pre-load AI models into RAM and launch dynamic idle watchdog
+    try:
+        from src.pipeline.services.model_lifecycle_manager import model_lifecycle_manager
+        model_lifecycle_manager.load_all_models()
+        model_lifecycle_manager.start_idle_watchdog()
+    except Exception as e:
+        logger.warning(f"Model Lifecycle Manager startup warning: {e}")
+
+    # Auto-create MongoDB indexes for studios and events collections
+    if mongo_db.db is not None:
+        try:
+            await mongo_db.db.studios.create_index("studio_id", unique=True)
+            await mongo_db.db.events.create_index("event_id", unique=True)
+            await mongo_db.db.events.create_index("studio_id")
+        except Exception as idx_err:
+            logger.warning(f"Studio/Events index creation warning: {idx_err}")
+
+    # Auto-recover any images stuck in 'queued' state from earlier worker restarts
+    if mongo_db.db is not None:
+        try:
+            queued_docs = await mongo_db.db.image_metadata.find({"embedding_status": "queued"}).to_list(1000)
+            if queued_docs:
+                from src.pipeline.queue.background_queue import background_queue
+                logger.info(f"Auto-recovering {len(queued_docs)} queued images for InsightFace embedding generation...")
+                for doc in queued_docs:
+                    fpath = doc.get("file_path", "")
+                    if fpath and os.path.exists(fpath):
+                        await background_queue.enqueue(
+                            task_type="generate_embedding",
+                            payload={
+                                "image_id": doc["image_id"],
+                                "file_path": fpath,
+                                "relative_path": doc.get("relative_folder", "")
+                            },
+                            job_id=doc.get("job_id", "recovered_job"),
+                            priority=2
+                        )
+        except Exception as e:
+            logger.warning(f"Task recovery warning: {e}")
+
+    yield
+
+    # Graceful shutdown handler
+    await worker_pool.stop()
+    await mongo_db.close()
+
+
 app = FastAPI(
     title="Silent-Face Anti-Spoofing API",
     description="FastAPI Backend for Live & Image Face Anti-Spoofing Detection",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
-# Configure robust CORS middleware allowing all local frontend origins & WebSockets
+# Configure robust CORS middleware allowing all local frontend origins & WebSockets with credential support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_CORS_ORIGINS,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -86,11 +152,13 @@ from fastapi import Request
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global uncaught exception on {request.url}: {exc}", exc_info=True)
+    origin = request.headers.get("origin") or "http://localhost:3000"
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc) or "Internal Server Error"},
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*"
         }
@@ -104,13 +172,16 @@ from src.pipeline.db.qdrant_service import qdrant_service
 from src.pipeline.workers.manager import worker_pool
 from src.pipeline.api.routes import router as pipeline_router
 from src.pipeline.api.recognition_routes import router as recognition_router
+from src.pipeline.api.master_routes import router as master_router
 from src.pipeline.services.embedding_service import embedding_service
+from src.pipeline.services.anti_spoof_service import anti_spoof_service
 from src.pipeline.websocket.manager import ws_manager
 from fastapi import WebSocket, WebSocketDisconnect
 
 # Include Pipeline API v2 Routers
 app.include_router(pipeline_router)
 app.include_router(recognition_router)
+app.include_router(master_router)
 
 
 @app.websocket("/ws/upload/{client_id}")
@@ -139,73 +210,7 @@ async def recognition_websocket_root(websocket: WebSocket, session_id: str):
 
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Startup handler connecting databases, launching worker pool, warming up AI models, and recovering stuck tasks."""
-    try:
-        await mongo_db.connect()
-    except Exception as e:
-        logger.warning(f"MongoDB connection warning on startup: {e}")
 
-    try:
-        await qdrant_service.connect()
-    except Exception as e:
-        logger.warning(f"Qdrant connection warning on startup: {e}")
-
-    try:
-        await worker_pool.start()
-    except Exception as e:
-        logger.warning(f"Worker pool startup warning: {e}")
-
-    # Warm up InsightFace embedding engine and MiniFASNet anti-spoof model in RAM
-    try:
-        embedding_service.warmup()
-    except Exception as e:
-        logger.warning(f"Embedding warmup warning: {e}")
-
-
-    # Auto-recover any images stuck in 'queued' state from earlier worker restarts
-    if mongo_db.db is not None:
-        try:
-            queued_docs = await mongo_db.db.image_metadata.find({"embedding_status": "queued"}).to_list(1000)
-            if queued_docs:
-                from src.pipeline.queue.background_queue import background_queue
-                logger.info(f"Auto-recovering {len(queued_docs)} queued images for InsightFace embedding generation...")
-                for doc in queued_docs:
-                    fpath = doc.get("file_path", "")
-                    if fpath and os.path.exists(fpath):
-                        await background_queue.enqueue(
-                            task_type="generate_embedding",
-                            payload={
-                                "image_id": doc["image_id"],
-                                "file_path": fpath,
-                                "relative_path": doc.get("relative_folder", "")
-                            },
-                            job_id=doc.get("job_id", "recovered_job"),
-                            priority=2
-                        )
-        except Exception as e:
-            logger.warning(f"Task recovery warning: {e}")
-
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown handler closing worker tasks and DB connections."""
-    await worker_pool.stop()
-    await mongo_db.close()
-
-
-# Global lazy loaded predictor and cropper
-predictor = None
-cropper = CropImage()
-
-
-def get_predictor():
-    global predictor
-    if predictor is None:
-        predictor = AntiSpoofPredict(DEVICE_ID)
-    return predictor
 
 
 def cv2_to_base64(img, format=".jpg"):
@@ -223,78 +228,42 @@ def decode_base64_image(b64_str: str):
 
 
 def process_image(image: np.ndarray, img_name: str = "uploaded_image") -> Dict[str, Any]:
+    from src.pipeline.services.model_lifecycle_manager import model_lifecycle_manager
+    from src.pipeline.services.face_processor import face_processor
+    from src.pipeline.services.anti_spoof_service import anti_spoof_service
+    from src.pipeline.services.liveness_motion_service import liveness_motion_service
+
+    model_lifecycle_manager.touch_activity()
+
     if image is None or image.size == 0:
         return {"success": False, "error": "Invalid image payload or corrupted image format"}
 
-    padded_img, (pad_x, pad_y) = pad_to_aspect_ratio_3_4(image)
-    model_pred_instance = get_predictor()
-    bbox = model_pred_instance.get_bbox(padded_img)
+    start_time = time.time()
+    faces = face_processor.process_image(image)
 
-    if bbox == [0, 0, 1, 1] or bbox[2] <= 0 or bbox[3] <= 0:
+    if not faces:
         return {
             "success": False,
             "error": "No face detected in the frame. Please position face clearly within view.",
             "image_name": img_name
         }
 
-    model_files = [f for f in os.listdir(MODEL_DIR) if f.endswith('.pth')]
-    if not model_files:
-        return {"success": False, "error": f"No model weights found in directory: {MODEL_DIR}"}
+    best_face = max(faces, key=lambda f: f.get("confidence", 0.0))
+    bbox = best_face.get("bbox", [0, 0, 1, 1])
+    landmarks = best_face.get("landmarks")
 
-    prediction = np.zeros((1, 3))
-    per_model_scores = {}
-    cropped_patches = {}
-    total_time = 0
+    motion_res = liveness_motion_service.analyze_landmark_motion([landmarks])
+    liveness_res = anti_spoof_service.predict_multi_frame([image], face_bboxes=[bbox], motion_analysis=motion_res)
 
-    for model_name in model_files:
-        h_input, w_input, model_type, scale = parse_model_name(model_name)
-        param = {
-            "org_img": padded_img,
-            "bbox": bbox,
-            "scale": scale,
-            "out_w": w_input,
-            "out_h": h_input,
-            "crop": True,
-        }
-        if scale is None:
-            param["crop"] = False
-
-        cropped_img = cropper.crop(**param)
-        patch_key = f"scale_{scale if scale is not None else 'full'}"
-        cropped_patches[patch_key] = cv2_to_base64(cropped_img)
-
-        start = time.time()
-        model_path = os.path.join(MODEL_DIR, model_name)
-        model_pred = model_pred_instance.predict(cropped_img, model_path)
-        cost = time.time() - start
-        total_time += cost
-
-        prediction += model_pred
-        real_score = float(model_pred[0][1])
-        per_model_scores[model_name] = {
-            "model_type": model_type,
-            "scale": scale,
-            "real_score": round(real_score * 100, 2),
-            "fake_score": round((1.0 - real_score) * 100, 2),
-            "latency_ms": round(cost * 1000, 1)
-        }
-
-    num_models = len(model_files)
-    final_probs = prediction[0] / num_models
-    real_prob = float(final_probs[1])
-    fake_prob = float(final_probs[0] + final_probs[2])
-
-    # Direct Comparison Rule: Calculate both real and spoof scores across models.
-    # If spoof_prob >= real_prob, or if any scale model fake_score > real_score, verdict is SPOOF.
-    any_model_spoof_dominant = any(m_data["fake_score"] > m_data["real_score"] for m_data in per_model_scores.values())
-    is_real = (real_prob > fake_prob) and (real_prob >= REAL_THRESHOLD) and (not any_model_spoof_dominant)
-    label = 1 if is_real else 0
-    score = real_prob if is_real else fake_prob
+    is_real = liveness_res.get("is_real", False)
+    real_prob = float(liveness_res.get("real_confidence", 0.95))
+    fake_prob = float(liveness_res.get("spoof_confidence", 0.05))
+    total_time = round((time.time() - start_time) * 1000, 1)
 
     result_label = "REAL FACE" if is_real else "FAKE / SPOOF ATTACK"
     color = (0, 215, 0) if is_real else (0, 0, 235)  # BGR
 
-    annotated = padded_img.copy()
+    annotated = image.copy()
     x, y, w, h = bbox
     cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 3)
 
@@ -306,17 +275,25 @@ def process_image(image: np.ndarray, img_name: str = "uploaded_image") -> Dict[s
     return {
         "success": True,
         "is_real": is_real,
-        "label": label,
+        "label": 1 if is_real else 0,
         "label_str": result_label,
-        "score": round(score * 100, 2),
+        "score": round(real_prob * 100, 2),
         "real_probability": round(real_prob * 100, 2),
         "fake_probability": round(fake_prob * 100, 2),
         "threshold_used": REAL_THRESHOLD,
         "bbox": {"x": bbox[0], "y": bbox[1], "width": bbox[2], "height": bbox[3]},
-        "per_model_scores": per_model_scores,
-        "total_latency_ms": round(total_time * 1000, 1),
+        "per_model_scores": {
+            "Landmark_Deformability_Engine": {
+                "model_type": "Landmark_Deformability",
+                "scale": 1.0,
+                "real_score": round(real_prob * 100, 2),
+                "fake_score": round(fake_prob * 100, 2),
+                "latency_ms": total_time
+            }
+        },
+        "total_latency_ms": total_time,
         "annotated_image_b64": cv2_to_base64(annotated),
-        "cropped_patches": cropped_patches,
+        "cropped_patches": {},
         "image_name": img_name
     }
 
@@ -340,7 +317,7 @@ def health_check():
 
 @app.get("/api/config")
 def get_config():
-    model_files = [f for f in os.listdir(MODEL_DIR) if f.endswith('.pth')] if os.path.exists(MODEL_DIR) else []
+    model_files = [f for f in os.listdir(MODEL_DIR) if f.endswith('.pth') and ('MiniFASNet' in f or 'org' in f or 'x' in f)] if os.path.exists(MODEL_DIR) else []
     return {
         "real_threshold": REAL_THRESHOLD,
         "device_id": DEVICE_ID,
@@ -374,6 +351,134 @@ def serve_sample_image(filename: str):
     return FileResponse(file_path)
 
 
+@app.get("/api/v2/images/{image_id:path}/stream")
+async def stream_binary_image_by_id(image_id: str):
+    """
+    High-performance Binary Blob Streaming Endpoint.
+    Serves full-resolution binary image files directly from local disk or Google Drive API,
+    with HTTP 304 Caching and Cache-Control headers for zero-CPU instant browser rendering.
+    """
+    cleaned_id = image_id.replace("file://", "").replace("\\", "/").strip()
+    target_name = os.path.basename(cleaned_id)
+
+    # 1. Direct disk path resolution
+    if os.path.exists(cleaned_id) and os.path.isfile(cleaned_id):
+        return FileResponse(cleaned_id, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    alt_disk_path = os.path.join(os.getcwd(), cleaned_id)
+    if os.path.exists(alt_disk_path) and os.path.isfile(alt_disk_path):
+        return FileResponse(alt_disk_path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    temp_dir = getattr(settings, "TEMP_UPLOAD_DIR", getattr(settings, "TEMP_DIR", "temp_uploads"))
+    temp_path = os.path.join(temp_dir, target_name)
+    if os.path.exists(temp_path) and os.path.isfile(temp_path):
+        return FileResponse(temp_path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    # 2. Recursive local disk search in temp_uploads
+    if target_name and os.path.exists(temp_dir):
+        for root, _, files in os.walk(temp_dir):
+            if target_name in files:
+                full_match = os.path.join(root, target_name)
+                return FileResponse(full_match, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    # 3. Query MongoDB & Stream Binary Blob from Google Drive API
+    if mongo_db.db is not None:
+        try:
+            doc = await mongo_db.db.image_metadata.find_one({
+                "$or": [
+                    {"image_id": image_id},
+                    {"_id": image_id},
+                    {"person_id": image_id},
+                    {"filename": image_id},
+                    {"internal_filename": {"$regex": str(target_name)}}
+                ]
+            })
+            if doc:
+                file_path = doc.get("file_path", "")
+                clean_path = file_path.replace("file://", "").replace("\\", "/").strip()
+                if os.path.exists(clean_path) and os.path.isfile(clean_path):
+                    return FileResponse(clean_path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+                # Fetch Google Drive binary blob via drive_service
+                drive_file_id = doc.get("drive_file_id")
+                if drive_file_id and drive_service.service:
+                    content_bytes = await drive_service.download_file_bytes(drive_file_id)
+                    if content_bytes:
+                        return Response(content=content_bytes, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+                drive_url = doc.get("drive_url")
+                if drive_url and ("drive.google.com" in drive_url or "googleusercontent.com" in drive_url):
+                    if "/file/d/" in drive_url:
+                        d_id = drive_url.split("/file/d/")[1].split("/")[0]
+                        return RedirectResponse(url=f"https://lh3.googleusercontent.com/d/{d_id}=s0")
+                    elif "id=" in drive_url:
+                        d_id = drive_url.split("id=")[1].split("&")[0]
+                        return RedirectResponse(url=f"https://lh3.googleusercontent.com/d/{d_id}=s0")
+        except Exception as e:
+            logger.warning(f"Error querying image metadata for {image_id}: {e}")
+
+    raise HTTPException(status_code=404, detail="Binary image file not found")
+
+
+@app.get("/api/v2/images/{image_id:path}/download")
+async def download_binary_image_by_id(image_id: str):
+    """
+    Dedicated 1-Click Original Image Download Endpoint.
+    Serves full-resolution original binary image files with Content-Disposition: attachment header.
+    """
+    cleaned_id = image_id.replace("file://", "").replace("\\", "/").strip()
+    target_name = os.path.basename(cleaned_id)
+
+    # 1. Direct local disk search
+    if os.path.exists(cleaned_id) and os.path.isfile(cleaned_id):
+        return FileResponse(cleaned_id, media_type="image/jpeg", filename=target_name)
+
+    alt_disk_path = os.path.join(os.getcwd(), cleaned_id)
+    if os.path.exists(alt_disk_path) and os.path.isfile(alt_disk_path):
+        return FileResponse(alt_disk_path, media_type="image/jpeg", filename=target_name)
+
+    temp_dir = getattr(settings, "TEMP_UPLOAD_DIR", getattr(settings, "TEMP_DIR", "temp_uploads"))
+    temp_path = os.path.join(temp_dir, target_name)
+    if os.path.exists(temp_path) and os.path.isfile(temp_path):
+        return FileResponse(temp_path, media_type="image/jpeg", filename=target_name)
+
+    # 2. Recursive search in temp_uploads
+    if target_name and os.path.exists(temp_dir):
+        for root, _, files in os.walk(temp_dir):
+            if target_name in files:
+                full_match = os.path.join(root, target_name)
+                return FileResponse(full_match, media_type="image/jpeg", filename=target_name)
+
+    # 3. Query MongoDB & Stream Binary Blob from Google Drive API
+    if mongo_db.db is not None:
+        try:
+            doc = await mongo_db.db.image_metadata.find_one({
+                "$or": [
+                    {"image_id": image_id},
+                    {"_id": image_id},
+                    {"person_id": image_id},
+                    {"filename": image_id},
+                    {"internal_filename": {"$regex": str(target_name)}}
+                ]
+            })
+            if doc:
+                file_path = doc.get("file_path", "")
+                clean_path = file_path.replace("file://", "").replace("\\", "/").strip()
+                if os.path.exists(clean_path) and os.path.isfile(clean_path):
+                    return FileResponse(clean_path, media_type="image/jpeg", filename=doc.get("original_filename", target_name))
+
+                drive_file_id = doc.get("drive_file_id")
+                if drive_file_id and drive_service.service:
+                    content_bytes = await drive_service.download_file_bytes(drive_file_id)
+                    if content_bytes:
+                        headers = {"Content-Disposition": f'attachment; filename="{doc.get("original_filename", target_name)}"'}
+                        return Response(content=content_bytes, media_type="image/jpeg", headers=headers)
+        except Exception as e:
+            logger.warning(f"Error serving download for {image_id}: {e}")
+
+    raise HTTPException(status_code=404, detail="Binary image file not found for download")
+
+
 @app.get("/temp_uploads/{path:path}")
 async def serve_or_fetch_temp_upload(path: str):
     """
@@ -392,6 +497,13 @@ async def serve_or_fetch_temp_upload(path: str):
         return FileResponse(alt_local_path)
 
     filename = os.path.basename(clean_relative)
+    temp_dir = getattr(settings, "TEMP_UPLOAD_DIR", getattr(settings, "TEMP_DIR", "temp_uploads"))
+    if filename and os.path.exists(temp_dir):
+        for root, _, files in os.walk(temp_dir):
+            if filename in files:
+                full_match = os.path.join(root, filename)
+                return FileResponse(full_match, headers={"Cache-Control": "public, max-age=86400"})
+
     drive_file_id = None
     drive_url = None
 

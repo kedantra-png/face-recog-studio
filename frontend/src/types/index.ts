@@ -73,6 +73,9 @@ export interface LatencyBreakdown {
 export interface RecognitionResult {
   success: boolean;
   match_found: boolean;
+  liveness_decision?: 'PASS' | 'PASSABLE' | 'CHALLENGE_REQUIRED' | 'FAIL';
+  challenge_action?: string | null;
+  challenge_verified?: boolean;
   person_id?: string | null;
   person_metadata?: PersonMetadata | null;
   similarity_score: number;
@@ -84,7 +87,7 @@ export interface RecognitionResult {
   processing_time_ms?: LatencyBreakdown;
   queue_wait_time_ms?: number;
   top_matches: TopMatch[];
-  recognition_status: 'MATCH_FOUND' | 'NO_MATCH' | 'POOR_QUALITY' | 'SPOOF_DETECTED' | 'REJECTED_SECURITY';
+  recognition_status: 'MATCH_FOUND' | 'NO_MATCH' | 'POOR_QUALITY' | 'SPOOF_DETECTED' | 'REJECTED_SECURITY' | 'UNCERTAIN_LIVENESS' | 'CHALLENGE_REQUIRED' | 'CHALLENGE_FAILED';
   message?: string;
   error?: string;
 }

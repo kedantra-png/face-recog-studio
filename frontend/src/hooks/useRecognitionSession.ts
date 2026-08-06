@@ -141,9 +141,16 @@ export function useRecognitionSession() {
           formData.append('files', blob, `frame_${idx}.jpg`);
         });
 
+        const visitorJwt = (typeof window !== 'undefined' ? (sessionStorage.getItem('studio_visitor_jwt') || localStorage.getItem('studio_visitor_jwt')) : null);
+        const headers: Record<string, string> = {};
+        if (visitorJwt) {
+          headers['Authorization'] = `Bearer ${visitorJwt}`;
+        }
+
         const response = await fetch(`${baseUrl}/api/v2/recognition/verify`, {
           method: 'POST',
-          body: formData, // Browser sets multipart/form-data boundary automatically
+          headers,
+          body: formData,
         });
 
         if (!response.ok) {
@@ -190,6 +197,54 @@ export function useRecognitionSession() {
     [session, initSession]
   );
 
+  const executeChallengeVerification = useCallback(
+    async (actionType: string, challengeFrames: CandidateFrame[]) => {
+      setIsProcessing(true);
+      setError(null);
+      setCurrentProgress({ stage: 'VALIDATING', message: `Verifying active challenge (${actionType})...` });
+
+      try {
+        const baseUrl = getApiBaseUrl();
+        const formData = new FormData();
+        formData.append('session_id', session?.session_id || 'challenge_sess');
+        formData.append('action_type', actionType);
+
+        challengeFrames.forEach((f, idx) => {
+          const blob = f.frame_blob instanceof Blob ? f.frame_blob : base64ToBlob(f.frame_b64);
+          formData.append('files', blob, `challenge_frame_${idx}.jpg`);
+        });
+
+        const visitorJwt = typeof window !== 'undefined' ? (sessionStorage.getItem('studio_visitor_jwt') || localStorage.getItem('studio_visitor_jwt')) : null;
+        const headers: Record<string, string> = {};
+        if (visitorJwt) {
+          headers['Authorization'] = `Bearer ${visitorJwt}`;
+        }
+
+        const response = await fetch(`${baseUrl}/api/v2/recognition/challenge/verify`, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error('Challenge verification request failed');
+        }
+
+        const resData: RecognitionResult = await response.json();
+        setResult(resData);
+        setCurrentProgress({ stage: 'FINISHED', message: 'Challenge verified successfully', payload: resData });
+        return resData;
+      } catch (err: any) {
+        console.error('Challenge verification error:', err);
+        setError(err.message || 'Challenge verification failed');
+        return null;
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [session]
+  );
+
   const resetSession = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -218,6 +273,7 @@ export function useRecognitionSession() {
     error,
     initSession,
     executeRecognition,
+    executeChallengeVerification,
     resetSession,
   };
 }

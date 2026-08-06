@@ -21,7 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 w-full glass-panel border-b border-slate-800/80 bg-[#090d16]/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        
+
         {/* Brand Logo & Title */}
         <div className="flex items-center space-x-3">
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-lg shadow-emerald-500/20">
@@ -42,13 +42,12 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* System Status & Quick Info */}
         <div className="flex items-center space-x-4">
-          
+
           {/* Connection Status Badge */}
-          <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${
-            isConnected 
-              ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30' 
+          <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${isConnected
+              ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30'
               : 'bg-rose-950/40 text-rose-400 border-rose-500/30'
-          }`}>
+            }`}>
             <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
             <Server className="w-3.5 h-3.5" />
             <span>{isConnected ? 'FastAPI Connected' : 'Backend Offline'}</span>
@@ -63,13 +62,25 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Upload Pipeline Dashboard Link */}
+          {/* Master Admin Portal Link (FastAPI) */}
+          <a
+            href="http://127.0.0.1:8000/master/login"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 font-semibold text-xs transition border border-purple-500/30"
+            title="Master Admin Gateway (FastAPI)"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden md:inline">Master Portal</span>
+          </a>
+
+          {/* Studio Pipeline Dashboard Link */}
           <Link
-            href="/upload"
+            href="/studio"
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-semibold text-xs transition shadow-md shadow-emerald-500/20"
           >
             <UploadCloud className="w-4 h-4" />
-            <span className="hidden sm:inline">Upload Pipeline</span>
+            <span className="hidden sm:inline">Studio Pipeline</span>
           </Link>
 
           {/* Config Settings Button */}

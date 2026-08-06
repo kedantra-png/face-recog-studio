@@ -90,17 +90,18 @@ class TextureAntiSpoofEvaluator:
 
         high_freq_ratio = float(high_freq_energy / total_energy)
 
-        # Detect sharp periodic spectral peaks (characteristic of digital displays)
+        # Detect sharp periodic spectral peaks (characteristic of digital display pixel matrices)
         high_freq_mags = magnitude_spectrum[high_freq_mask]
         peak_ratio = float(np.max(high_freq_mags) / (np.mean(high_freq_mags) + 1e-5)) if len(high_freq_mags) > 0 else 0.0
 
-        # Moiré score calculation (normalized 0.0 to 1.0; > 0.45 indicates screen replay attack)
-        moire_score = min(1.0, max(0.0, (high_freq_ratio * 3.2) + (peak_ratio / 35.0)))
-        is_screen_replay = moire_score >= 0.45
+        # Dynamic Moiré score calculation: Requires both high-frequency energy ratio & sharp periodic spectral spikes
+        # Screen replay attacks exhibit peak_ratio > 25.0 and high_freq_ratio > 0.15
+        moire_score = min(1.0, max(0.0, (high_freq_ratio * 2.2) + (peak_ratio / 50.0)))
+        is_screen_replay = bool(moire_score >= 0.65 and peak_ratio >= 25.0)
 
         return {
             "moire_score": round(float(moire_score), 4),
-            "is_screen_replay": bool(is_screen_replay),
+            "is_screen_replay": is_screen_replay,
             "high_freq_ratio": round(float(high_freq_ratio), 4),
             "peak_ratio": round(float(peak_ratio), 2)
         }
@@ -123,7 +124,7 @@ class TextureAntiSpoofEvaluator:
         sat_mean = float(np.mean(sat_channel))
         sat_std = float(np.std(sat_channel))
 
-        # 2. Specular reflection glare detection (Bright clipped highlights on paper/screen)
+        # 2. Specular reflection glare detection (Bright clipped highlights on paper/screen > 250 value)
         val_channel = hsv[:, :, 2]
         glare_pixels = np.sum(val_channel >= 250)
         glare_ratio = float(glare_pixels / (val_channel.size + 1e-5))
@@ -134,16 +135,16 @@ class TextureAntiSpoofEvaluator:
         cr_mean = float(np.mean(cr))
         cb_mean = float(np.mean(cb))
 
-        # Human skin YCbCr standard bounds: Cr in [130, 175], Cb in [75, 130]
-        skin_chroma_valid = (130.0 <= cr_mean <= 175.0) and (75.0 <= cb_mean <= 130.0)
+        # Human skin YCbCr standard bounds: Cr in [125, 180], Cb in [70, 135]
+        skin_chroma_valid = (125.0 <= cr_mean <= 180.0) and (70.0 <= cb_mean <= 135.0)
 
         # Calculate color texture score (0.0 = spoof/screen, 1.0 = genuine skin)
-        sat_score = max(0.0, 1.0 - abs(sat_mean - 65.0) / 90.0)
-        glare_score = max(0.0, 1.0 - (glare_ratio * 15.0))
-        chroma_score = 1.0 if skin_chroma_valid else 0.4
+        sat_score = max(0.0, 1.0 - abs(sat_mean - 65.0) / 100.0)
+        glare_score = max(0.0, 1.0 - (glare_ratio * 10.0))
+        chroma_score = 1.0 if skin_chroma_valid else 0.5
 
-        color_score = round(0.4 * sat_score + 0.3 * glare_score + 0.3 * chroma_score, 3)
-        is_color_anomaly = color_score < 0.40 or glare_ratio > 0.05
+        color_score = round(0.40 * sat_score + 0.30 * glare_score + 0.30 * chroma_score, 3)
+        is_color_anomaly = bool(color_score < 0.35 or glare_ratio > 0.15)
 
         return {
             "color_score": color_score,
@@ -169,7 +170,11 @@ class TextureAntiSpoofEvaluator:
         physical_real_prob = float(0.60 * (1.0 - moire_score) + 0.40 * color_score)
         physical_real_prob = round(max(0.0, min(1.0, physical_real_prob)), 4)
 
-        is_physical_spoof = (moire_score >= 0.48) or (color_res["glare_ratio"] > 0.08) or (physical_real_prob < 0.40)
+        # Strict physical spoof decision: Requires confirmed 2D FFT screen replay peaks (peak_ratio >= 28.0) or extreme glare (>20%)
+        is_physical_spoof = bool(
+            (moire_score >= 0.70 and fft_res.get("peak_ratio", 0) >= 28.0) or
+            (color_res["glare_ratio"] > 0.20)
+        )
 
         return {
             "physical_real_prob": physical_real_prob,

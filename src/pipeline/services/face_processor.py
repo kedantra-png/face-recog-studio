@@ -58,6 +58,54 @@ class FaceProcessor:
             self.app = None
             self._initialized = True
 
+    def detect_faces_and_landmarks(self, img: np.ndarray) -> List[Dict[str, Any]]:
+        """
+        Fast multi-scale face detection & landmark extraction ONLY (SCRFD / InsightFace).
+        Does NOT compute 512-d ArcFace embeddings to minimize CPU utilization during liveness filtering.
+        """
+        if img is None or img.size == 0:
+            return []
+
+        if not self._initialized:
+            self._init_insightface()
+
+        if self.app is None:
+            return self._fallback_processing(img)
+
+        try:
+            target_det_size = (640, 640)
+
+            if hasattr(self.app, 'models') and 'detection' in self.app.models:
+                det_model = self.app.models['detection']
+                if getattr(det_model, 'input_size', None) != target_det_size:
+                    det_model.input_size = target_det_size
+
+            faces = self.app.get(img)
+
+            processed_faces = []
+            for face in faces:
+                bbox = [int(v) for v in face.bbox]
+                w_b = max(0, bbox[2] - bbox[0])
+                h_b = max(0, bbox[3] - bbox[1])
+                bbox_xywh = [bbox[0], bbox[1], w_b, h_b]
+                landmarks = face.kps
+                det_score = float(face.det_score)
+
+                if w_b < settings.MIN_FACE_SIZE:
+                    continue
+
+                processed_faces.append({
+                    "bbox": bbox_xywh,
+                    "confidence": round(det_score, 4),
+                    "landmarks": landmarks.tolist() if landmarks is not None else [],
+                    "raw_face_obj": face
+                })
+
+            return processed_faces
+        except Exception as e:
+            logger.error(f"Error during face detection & landmark extraction: {e}")
+            return []
+
     def process_image(self, img: np.ndarray) -> List[Dict[str, Any]]:
         """
         Detects all faces in an image (large and small), aligns each face using

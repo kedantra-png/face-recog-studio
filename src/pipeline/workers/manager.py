@@ -144,12 +144,25 @@ class WorkerPool:
                 os.rename(file_path, new_path)
                 file_path = new_path
 
+        studio_id = ""
+        event_id = ""
+        if mongo_db.db is not None and job_id:
+            try:
+                job_doc = await mongo_db.db.upload_jobs.find_one({"job_id": job_id})
+                if job_doc:
+                    studio_id = job_doc.get("studio_id", "")
+                    event_id = job_doc.get("event_id", "")
+            except Exception:
+                pass
+
         image_id = f"img_{uuid.uuid4().hex[:12]}"
         now = time.time()
 
         image_doc = {
             "image_id": image_id,
             "job_id": job_id,
+            "studio_id": studio_id,
+            "event_id": event_id,
             "user_id": "default_user",
             "original_filename": os.path.basename(relative_path),
             "internal_filename": os.path.basename(file_path),
@@ -232,12 +245,37 @@ class WorkerPool:
                         _, buf = cv2.imencode('.jpg', aligned_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
                         face_thumb_b64 = f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
 
+                    studio_id = ""
+                    event_id = ""
+                    drive_url = ""
+                    drive_file_id = ""
+                    if mongo_db.db is not None:
+                        try:
+                            img_doc = await mongo_db.db.image_metadata.find_one({"image_id": image_id})
+                            if img_doc:
+                                studio_id = img_doc.get("studio_id", "")
+                                event_id = img_doc.get("event_id", "")
+                                drive_url = img_doc.get("drive_url", "")
+                                drive_file_id = img_doc.get("drive_file_id", "")
+
+                            if (not studio_id or not event_id) and job_id:
+                                job_doc = await mongo_db.db.upload_jobs.find_one({"job_id": job_id})
+                                if job_doc:
+                                    studio_id = studio_id or job_doc.get("studio_id", "")
+                                    event_id = event_id or job_doc.get("event_id", "")
+                        except Exception:
+                            pass
+
                     payload = {
                         "image_id": image_id,
                         "job_id": job_id,
+                        "studio_id": studio_id,
+                        "event_id": event_id,
+                        "file_path": file_path,
+                        "drive_url": drive_url,
+                        "drive_file_id": drive_file_id,
                         "person_id": os.path.basename(file_path),
                         "filename": os.path.basename(file_path),
-                        "face_thumbnail": face_thumb_b64,
                         "quality_score": face_q["score"],
                         "confidence": face["confidence"],
                         "created_at": int(time.time())
@@ -260,6 +298,7 @@ class WorkerPool:
                     })
 
                 # Batch upsert face vectors to Qdrant
+                primary_emb = qdrant_points[0]["vector"] if qdrant_points else []
                 if qdrant_points:
                     await qdrant_service.batch_upsert_embeddings(qdrant_points)
 
@@ -271,6 +310,7 @@ class WorkerPool:
                         "detected_faces": len(faces_stored),
                         "quality_score": img_quality["score"],
                         "faces_detail": faces_stored,
+                        "embedding": primary_emb,
                         "updated_at": time.time()
                     }
                 )
@@ -319,19 +359,30 @@ class WorkerPool:
 
                 drive_res = await drive_service.upload_file(file_path, filename)
                 if drive_res:
+                    drive_url = drive_res.get("drive_url")
+                    drive_file_id = drive_res.get("drive_file_id")
                     await mongo_db.update_image_metadata(
                         image_id,
                         {
                             "drive_status": "completed",
-                            "drive_file_id": drive_res.get("drive_file_id"),
-                            "drive_url": drive_res.get("drive_url"),
+                            "drive_file_id": drive_file_id,
+                            "drive_url": drive_url,
                             "updated_at": time.time()
                         }
                     )
+                    try:
+                        vector_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{image_id}_face_0"))
+                        await qdrant_service.set_payload(
+                            point_id=vector_id,
+                            payload={"drive_url": drive_url, "drive_file_id": drive_file_id}
+                        )
+                    except Exception as q_err:
+                        logger.warning(f"Could not update Qdrant payload for {image_id}: {q_err}")
+
                     await ws_manager.broadcast("drive_completed", {
                         "job_id": job_id,
                         "image_id": image_id,
-                        "drive_url": drive_res.get("drive_url")
+                        "drive_url": drive_url
                     })
 
                 await background_queue.mark_completed(task_id)

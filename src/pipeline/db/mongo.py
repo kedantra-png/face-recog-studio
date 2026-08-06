@@ -51,12 +51,24 @@ class MongoManager:
         if self.db is None:
             return
 
+        # Indexes for studios collection
+        await self.db.studios.create_index("studio_id", unique=True)
+        await self.db.studios.create_index("studio_name")
+
+        # Indexes for events collection
+        await self.db.events.create_index("event_id", unique=True)
+        await self.db.events.create_index([("studio_id", 1), ("created_at", -1)])
+        await self.db.events.create_index([("studio_id", 1), ("search_status", 1)])
+        await self.db.events.create_index([("studio_id", 1), ("event_status", 1)])
+
         # Indexes for image_metadata collection
         await self.db.image_metadata.create_index("image_id", unique=True)
         await self.db.image_metadata.create_index("sha256")
         await self.db.image_metadata.create_index("job_id")
         await self.db.image_metadata.create_index("status")
         await self.db.image_metadata.create_index("created_at")
+        await self.db.image_metadata.create_index([("studio_id", 1), ("event_id", 1), ("created_at", -1)])
+        await self.db.image_metadata.create_index([("studio_id", 1), ("status", 1)])
 
         # Indexes for upload_jobs collection
         await self.db.upload_jobs.create_index("job_id", unique=True)
@@ -76,6 +88,10 @@ class MongoManager:
         # Indexes for audit_logs collection
         await self.db.audit_logs.create_index("event_type")
         await self.db.audit_logs.create_index("timestamp")
+
+        # Indexes for blacklisted_tokens collection (automatic TTL purge on expiration)
+        await self.db.blacklisted_tokens.create_index("token_signature", unique=True)
+        await self.db.blacklisted_tokens.create_index("expires_at", expireAfterSeconds=0)
 
         logger.info("MongoDB database indexes successfully verified.")
 

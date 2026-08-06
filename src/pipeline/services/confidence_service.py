@@ -21,47 +21,47 @@ from src.pipeline.db.mongo import mongo_db
 logger = logging.getLogger("pipeline.confidence")
 
 
-def resolve_image_thumbnail(file_path: str) -> str:
-    """Converts a local image file path or Google Drive link into a self-contained base64 JPEG URI or Drive thumbnail URL."""
+def resolve_image_thumbnail(file_path: str, image_id: str = "") -> str:
+    """Converts a local image file path or Google Drive link into a lightweight streamable binary image URL."""
     if not file_path:
         return ""
 
     if file_path.startswith("data:image/"):
         return file_path
 
+    # Clean file:// scheme prefix
+    clean_path = file_path
+    if clean_path.startswith("file://"):
+        clean_path = clean_path[7:]
+    clean_path = clean_path.replace("\\", "/").strip()
+
+    base_url = getattr(settings, 'BACKEND_BASE_URL', 'http://127.0.0.1:8000').rstrip('/')
+
+    if image_id:
+        return f"{base_url}/api/v2/images/{image_id}/stream"
+
     # Convert Google Drive view URLs to direct 100% full-resolution CDN links (s0 = full original quality)
-    if "drive.google.com" in file_path:
-        if "/file/d/" in file_path:
-            drive_id = file_path.split("/file/d/")[1].split("/")[0]
+    if "drive.google.com" in clean_path or "googleusercontent.com" in clean_path:
+        if "/file/d/" in clean_path:
+            drive_id = clean_path.split("/file/d/")[1].split("/")[0]
             return f"https://lh3.googleusercontent.com/d/{drive_id}=s0"
-        elif "id=" in file_path:
-            drive_id = file_path.split("id=")[1].split("&")[0]
+        elif "id=" in clean_path:
+            drive_id = clean_path.split("id=")[1].split("&")[0]
             return f"https://lh3.googleusercontent.com/d/{drive_id}=s0"
-        return file_path
+        elif "/d/" in clean_path:
+            drive_id = clean_path.split("/d/")[1].split("=")[0].split("/")[0]
+            return f"https://lh3.googleusercontent.com/d/{drive_id}=s0"
+        return clean_path
 
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        return file_path
+    if clean_path.startswith("http://") or clean_path.startswith("https://"):
+        return clean_path
 
-    clean_path = file_path.replace("\\", "/")
-    possible_paths = [
-        clean_path,
-        os.path.join(os.getcwd(), clean_path),
-        os.path.join(getattr(settings, 'UPLOAD_DIR', 'temp_uploads'), os.path.basename(clean_path))
-    ]
+    rel_p = clean_path
+    if "temp_uploads" in rel_p:
+        rel_p = rel_p.split("temp_uploads")[-1].lstrip("/\\")
+        return f"{base_url}/temp_uploads/{rel_p}"
 
-    for path in possible_paths:
-        if os.path.exists(path) and os.path.isfile(path):
-            try:
-                img = cv2.imread(path)
-                if img is not None:
-                    # High quality 98% JPEG encoding without downscaling loss
-                    _, buf = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
-                    return f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
-            except Exception as e:
-                logger.warning(f"Error encoding thumbnail image at {path}: {e}")
-
-
-    return f"http://127.0.0.1:8000/{clean_path.lstrip('/')}"
+    return f"{base_url}/temp_uploads/{os.path.basename(clean_path)}"
 
 
 
@@ -124,7 +124,7 @@ class ConfidenceService:
                 payload.get("face_thumbnail") or
                 ""
             )
-            resolved_thumb = resolve_image_thumbnail(raw_thumb)
+            resolved_thumb = resolve_image_thumbnail(raw_thumb, image_id=image_id)
 
             match_entry = {
                 "image_id": image_id,
@@ -181,11 +181,12 @@ class ConfidenceService:
             )
             if doc:
                 raw_path = doc.get("drive_url") or doc.get("file_path") or doc.get("relative_folder") or ""
+                resolved_thumb = resolve_image_thumbnail(raw_path, image_id=image_id)
                 return {
                     "person_name": doc.get("person_name", doc.get("original_filename", person_id)),
                     "role": doc.get("role", "Verified User"),
                     "department": doc.get("department", "Security Division"),
-                    "thumbnail_url": raw_path,
+                    "thumbnail_url": resolved_thumb,
                     "drive_url": doc.get("drive_url"),
                     "drive_file_id": doc.get("drive_file_id"),
                     "quality_score": doc.get("quality_score", 0.90)

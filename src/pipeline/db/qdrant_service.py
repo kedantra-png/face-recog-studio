@@ -115,17 +115,35 @@ class QdrantService:
             return True
         except Exception as e:
             logger.error(f"Failed batch vector upsert: {e}")
+    async def set_payload(
+        self,
+        point_id: str,
+        payload: Dict[str, Any]
+    ) -> bool:
+        """Updates payload metadata for a vector point in Qdrant."""
+        if self.client is None:
+            return False
+        try:
+            await self.client.set_payload(
+                collection_name=self.collection_name,
+                payload=payload,
+                points=[point_id]
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to update payload for point {point_id}: {e}")
             return False
 
     async def search_nearest_neighbors(
         self,
         query_vector: List[float],
         top_k: int = 10,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        query_filter: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """
         Executes nearest-neighbor cosine similarity search in Qdrant for a 512-d query vector.
-        Supports query_points, search, and search_points across qdrant-client API versions.
+        Supports query_filter for multi-tenant studio payload filtering (<2ms index execution).
         """
         if self.client is None or not query_vector:
             logger.warning("Qdrant client unavailable. Returning empty nearest neighbors result.")
@@ -139,6 +157,7 @@ class QdrantService:
                 query_res = await self.client.query_points(
                     collection_name=self.collection_name,
                     query=query_vector,
+                    query_filter=query_filter,
                     limit=top_k,
                     score_threshold=score_threshold,
                     with_payload=True
@@ -149,6 +168,7 @@ class QdrantService:
                 res = await self.client.search_points(
                     collection_name=self.collection_name,
                     vector=query_vector,
+                    query_filter=query_filter,
                     limit=top_k,
                     score_threshold=score_threshold,
                     with_payload=True
@@ -159,6 +179,7 @@ class QdrantService:
                 hits = await self.client.search(
                     collection_name=self.collection_name,
                     query_vector=query_vector,
+                    query_filter=query_filter,
                     limit=top_k,
                     score_threshold=score_threshold,
                     with_payload=True

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { RecognitionResult } from '@/types';
+import { getApiBaseUrl } from '@/lib/api';
 import {
   CheckCircle2,
   XCircle,
@@ -14,7 +15,8 @@ import {
   Search,
   Activity,
   Layers,
-  RotateCcw
+  RotateCcw,
+  Download
 } from 'lucide-react';
 
 interface RecognitionDashboardProps {
@@ -56,7 +58,7 @@ export const RecognitionDashboard: React.FC<RecognitionDashboardProps> = ({ resu
           text: 'text-rose-400',
           badgeBg: 'bg-rose-500/10 border-rose-500/30 text-rose-400',
           icon: <ShieldAlert className="w-8 h-8 text-rose-400" />,
-          desc: 'MiniFASNet anti-spoofing engine detected a presentation attack attempt.',
+          desc: 'Direct Landmark Liveness engine detected a 2D presentation attack attempt.',
         };
       case 'POOR_QUALITY':
         return {
@@ -67,6 +69,15 @@ export const RecognitionDashboard: React.FC<RecognitionDashboardProps> = ({ resu
           icon: <AlertTriangle className="w-8 h-8 text-amber-400" />,
           desc: message || 'Frame quality is blurry or lighting is insufficient. Please adjust camera position.',
         };
+      case 'CHALLENGE_REQUIRED':
+        return {
+          title: 'ACTIVE LIVENESS CHALLENGE REQUIRED',
+          bg: 'bg-amber-950/80 border-amber-500/50 shadow-amber-500/20',
+          text: 'text-amber-400',
+          badgeBg: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+          icon: <AlertTriangle className="w-8 h-8 text-amber-400 animate-pulse" />,
+          desc: message || 'Liveness ambiguous. Please complete active challenge (eye blink or head turn).',
+        };
       case 'NO_MATCH':
       default:
         return {
@@ -75,7 +86,7 @@ export const RecognitionDashboard: React.FC<RecognitionDashboardProps> = ({ resu
           text: 'text-slate-300',
           badgeBg: 'bg-slate-800 border-slate-700 text-slate-300',
           icon: <XCircle className="w-8 h-8 text-slate-400" />,
-          desc: 'No face candidate matched the 0.60 similarity threshold in Qdrant database.',
+          desc: 'No face candidate matched the 42% similarity threshold in Qdrant database.',
         };
     }
   };
@@ -140,6 +151,14 @@ export const RecognitionDashboard: React.FC<RecognitionDashboardProps> = ({ resu
                     src={person_metadata.thumbnail_url}
                     alt={person_metadata.person_name || 'Matched Person'}
                     className="w-full h-full object-cover"
+                    onError={(e) => {
+                      const imgEl = e.currentTarget;
+                      const rawSrc = imgEl.src;
+                      if (!rawSrc.includes('/temp_uploads/') && person_metadata.person_name) {
+                        const baseUrl = rawSrc.split('/api/')[0];
+                        imgEl.src = `${baseUrl}/temp_uploads/${person_metadata.person_name}`;
+                      }
+                    }}
                   />
                 ) : (
                   <UserCheck className="w-12 h-12 text-emerald-400" />
@@ -153,13 +172,25 @@ export const RecognitionDashboard: React.FC<RecognitionDashboardProps> = ({ resu
                 <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">Database Match</span>
                 <h3 className="text-xl font-bold text-slate-100">{person_metadata.person_name || person_id}</h3>
                 <p className="text-xs font-mono text-emerald-400 mt-0.5">ID: {person_id || 'N/A'}</p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className="px-2.5 py-0.5 rounded-md text-[11px] bg-slate-800 text-slate-300 border border-slate-700">
                     {person_metadata.role || 'Verified Subject'}
                   </span>
                   <span className="px-2.5 py-0.5 rounded-md text-[11px] bg-slate-800 text-slate-300 border border-slate-700">
                     {person_metadata.department || 'Security Division'}
                   </span>
+                  {person_id && (
+                    <a
+                      href={`${getApiBaseUrl()}/api/v2/images/${encodeURIComponent(person_id)}/download`}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center space-x-1 transition-all shadow-md shadow-emerald-500/20"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </a>
+                  )}
                 </div>
               </div>
             </div>

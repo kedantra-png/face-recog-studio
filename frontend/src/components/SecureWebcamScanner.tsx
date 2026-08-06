@@ -5,15 +5,19 @@ import { Camera, ShieldCheck, Sparkles, AlertCircle, RefreshCw, Eye, Sun, Zap, C
 import { FrameQualityMetrics, CandidateFrame } from '@/types';
 
 interface SecureWebcamScannerProps {
-  onAutoCaptureFrames: (frames: CandidateFrame[]) => void;
+  onAutoCaptureFrames?: (frames: CandidateFrame[]) => void;
+  onAutoCapture?: (frames: CandidateFrame[]) => void;
   isProcessing: boolean;
+  currentProgress?: any;
   stageMessage?: string;
   onReset?: () => void;
 }
 
 export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
   onAutoCaptureFrames,
+  onAutoCapture,
   isProcessing,
+  currentProgress,
   stageMessage,
   onReset,
 }) => {
@@ -39,27 +43,48 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
 
   const lastFrameDataRef = useRef<Uint8ClampedArray | null>(null);
   const hasFiredRef = useRef<boolean>(false);
+  const lastCaptureTimeRef = useRef<number>(0);
 
 
-  // Initialize camera
+  // Initialize camera with resilient fallback constraints
   const startCamera = useCallback(async () => {
     try {
       setCameraError(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user',
-        },
-        audio: false,
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
+      let mediaStream: MediaStream | null = null;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user',
+          },
+          audio: false,
+        });
+      } catch (firstErr) {
+        console.warn('Primary 1280x720 video constraint failed, attempting basic video stream fallback...', firstErr);
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      if (mediaStream) {
+        setStream(mediaStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
       }
     } catch (err: any) {
       console.error('Camera permission denied or camera unavailable:', err);
-      setCameraError(err.message || 'Camera permission denied. Please allow camera access in browser settings.');
+      let errorMsg = 'Camera permission denied. Please allow camera access in browser settings.';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMsg = 'Camera permission denied by browser. Click the lock/tune icon in your browser URL bar, set Camera to "Allow", and click Retry below.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMsg = 'No camera device detected. Please connect a USB/laptop webcam and click Retry.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMsg = 'Webcam is currently in use by another browser tab or application (e.g. Teams, Zoom). Please close other camera apps and click Retry.';
+      }
+      setCameraError(errorMsg);
     }
   }, []);
 
@@ -178,14 +203,16 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
             guidance_message: message,
           });
 
-          // Accumulate candidate frames if usable
-          if (usable) {
+          // Accumulate candidate frames if usable with inter-frame temporal sampling delay (~80-100ms interval)
+          const now = Date.now();
+          if (usable && (now - lastCaptureTimeRef.current >= 80)) {
+            lastCaptureTimeRef.current = now;
             const b64 = canvas.toDataURL('image/jpeg', 0.90);
             const frameObj: CandidateFrame = {
               frame_b64: b64,
               quality_score: overallScore,
               blur_score: Math.round(blurScore),
-              timestamp: Date.now(),
+              timestamp: now,
             };
 
             setStableFrameCount((prev) => prev + 1);
@@ -213,7 +240,10 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
                 
                 const best4TimeSpaced = [best1, best2, best3, best4];
                 setTimeout(() => {
-                  onAutoCaptureFrames(best4TimeSpaced);
+                  const captureFn = onAutoCaptureFrames || onAutoCapture;
+                  if (captureFn) {
+                    captureFn(best4TimeSpaced);
+                  }
                 }, 50);
               }
               return updated;
@@ -304,6 +334,29 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
               {/* Laser Scanning Animation when processing */}
               {isProcessing && (
                 <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#22d3ee] animate-[scan_2s_infinite_linear]" />
+              )}
+
+              {/* Augmented Reality (AR) Active Challenge Target Guides */}
+              {stageMessage && stageMessage.toLowerCase().includes('turn_head') && (
+                <div className="absolute inset-0 flex items-center justify-between px-3 pointer-events-none">
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center animate-ping">
+                    <span className="text-cyan-300 font-bold text-xs">←</span>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center animate-ping">
+                    <span className="text-cyan-300 font-bold text-xs">→</span>
+                  </div>
+                </div>
+              )}
+
+              {stageMessage && stageMessage.toLowerCase().includes('blink') && (
+                <div className="absolute top-1/3 inset-x-0 flex justify-center space-x-12 pointer-events-none">
+                  <div className="w-6 h-6 rounded-full bg-purple-500/30 border border-purple-400 animate-pulse flex items-center justify-center">
+                    <Eye className="w-3.5 h-3.5 text-purple-300" />
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-purple-500/30 border border-purple-400 animate-pulse flex items-center justify-center">
+                    <Eye className="w-3.5 h-3.5 text-purple-300" />
+                  </div>
+                </div>
               )}
             </div>
 

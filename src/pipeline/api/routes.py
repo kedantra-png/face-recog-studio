@@ -9,6 +9,7 @@ job control, paginated upload history, telemetry metrics, and real-time WebSocke
 import os
 import time
 import uuid
+import shutil
 import logging
 import cv2
 import numpy as np
