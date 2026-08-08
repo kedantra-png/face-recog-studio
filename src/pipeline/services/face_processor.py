@@ -88,7 +88,8 @@ class FaceProcessor:
                 w_b = max(0, bbox[2] - bbox[0])
                 h_b = max(0, bbox[3] - bbox[1])
                 bbox_xywh = [bbox[0], bbox[1], w_b, h_b]
-                landmarks = face.kps
+                lm_106 = getattr(face, 'landmark_2d_106', None)
+                landmarks = lm_106 if (lm_106 is not None and len(lm_106) >= 106) else face.kps
                 det_score = float(face.det_score)
 
                 if w_b < settings.MIN_FACE_SIZE:
@@ -98,6 +99,8 @@ class FaceProcessor:
                     "bbox": bbox_xywh,
                     "confidence": round(det_score, 4),
                     "landmarks": landmarks.tolist() if landmarks is not None else [],
+                    "landmarks_5": face.kps.tolist() if face.kps is not None else [],
+                    "landmarks_106": lm_106.tolist() if lm_106 is not None else [],
                     "raw_face_obj": face
                 })
 

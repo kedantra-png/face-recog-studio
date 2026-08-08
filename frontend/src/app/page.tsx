@@ -18,7 +18,7 @@ function HomeContent() {
   const [backendConfig, setBackendConfig] = useState<BackendConfig | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConfigOpen, setIsConfigOpen] = useState<boolean>(false);
-  const [activeApiUrl, setActiveApiUrl] = useState<string>('http://127.0.0.1:8000');
+  const [activeApiUrl, setActiveApiUrl] = useState<string>(() => getApiBaseUrl());
 
   // Studio Token Validation States
   const [isValidatingStudio, setIsValidatingStudio] = useState<boolean>(true);

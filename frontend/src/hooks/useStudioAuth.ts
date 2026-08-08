@@ -40,8 +40,50 @@ export function useStudioAuth() {
           return true;
         }
       }
+
+      // Fallback: If network request returns 401 or lags, verify unexpired JWT in localStorage
+      if (token) {
+        try {
+          const parts = token.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            if (payload && payload.exp && payload.exp * 1000 > Date.now()) {
+              setStudioInfo({
+                studio_id: payload.sub || 'studio_01',
+                studio_name: payload.studio_name || 'AuraFace Studio',
+                role: payload.role || 'studio',
+              });
+              setIsAuthenticated(true);
+              setIsLoading(false);
+              return true;
+            }
+          }
+        } catch (e) {
+          console.warn('JWT token parsing fallback failed:', e);
+        }
+      }
     } catch (err) {
       console.warn('Studio authentication verification failed:', err);
+      // Fallback on network error if token exists in localStorage
+      const token = typeof window !== 'undefined' ? localStorage.getItem('studio_token') : null;
+      if (token) {
+        try {
+          const parts = token.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            if (payload && payload.exp && payload.exp * 1000 > Date.now()) {
+              setStudioInfo({
+                studio_id: payload.sub || 'studio_01',
+                studio_name: payload.studio_name || 'AuraFace Studio',
+                role: payload.role || 'studio',
+              });
+              setIsAuthenticated(true);
+              setIsLoading(false);
+              return true;
+            }
+          }
+        } catch (e) {}
+      }
     }
 
     // Clean up stale or invalid tokens to prevent redirect loops

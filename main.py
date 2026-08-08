@@ -128,11 +128,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure robust CORS middleware allowing all local frontend origins & WebSockets with credential support
+# Configure robust CORS middleware allowing all local network frontend origins & WebSockets with credentials support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_CORS_ORIGINS,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

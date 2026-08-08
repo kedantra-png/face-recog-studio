@@ -59,7 +59,11 @@ export const useWebSocket = (onMessageReceived?: (event: WebSocketEvent) => void
     connect();
     return () => {
       if (wsRef.current) {
-        wsRef.current.close();
+        const ws = wsRef.current;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+        wsRef.current = null;
       }
     };
   }, [connect]);

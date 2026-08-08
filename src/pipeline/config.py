@@ -76,12 +76,15 @@ class PipelineConfig(BaseSettings):
     LIVENESS_UNCERTAIN_LOW: float = Field(default=0.25, env="LIVENESS_UNCERTAIN_LOW")
     LIVENESS_UNCERTAIN_HIGH: float = Field(default=0.65, env="LIVENESS_UNCERTAIN_HIGH")
 
-    # Weighted Multi-Frame Voting Fusion Weights
-    WEIGHT_MINIFASNET_V1SE: float = Field(default=0.30, env="WEIGHT_MINIFASNET_V1SE")
-    WEIGHT_MINIFASNET_V2: float = Field(default=0.30, env="WEIGHT_MINIFASNET_V2")
-    WEIGHT_LANDMARK_MOTION: float = Field(default=0.20, env="WEIGHT_LANDMARK_MOTION")
+    # Weighted Multi-Factor Fusion Weights (8 Factors)
+    WEIGHT_MINIFASNET_V1SE: float = Field(default=0.15, env="WEIGHT_MINIFASNET_V1SE")
+    WEIGHT_MINIFASNET_V2: float = Field(default=0.35, env="WEIGHT_MINIFASNET_V2")
+    WEIGHT_LANDMARK_MOTION: float = Field(default=0.15, env="WEIGHT_LANDMARK_MOTION")
     WEIGHT_MOTION_UNIFORMITY: float = Field(default=0.10, env="WEIGHT_MOTION_UNIFORMITY")
-    WEIGHT_FACE_QUALITY: float = Field(default=0.10, env="WEIGHT_FACE_QUALITY")
+    WEIGHT_OPTICAL_FLOW: float = Field(default=0.10, env="WEIGHT_OPTICAL_FLOW")
+    WEIGHT_TEMPORAL_CONSISTENCY: float = Field(default=0.05, env="WEIGHT_TEMPORAL_CONSISTENCY")
+    WEIGHT_FACE_QUALITY: float = Field(default=0.05, env="WEIGHT_FACE_QUALITY")
+    WEIGHT_POSE_STABILITY: float = Field(default=0.05, env="WEIGHT_POSE_STABILITY")
 
     # Model File Paths
     MINIFASNET_V1SE_MODEL_PATH: str = Field(default="resources/anti_spoof_models/4_0_0_80x80_MiniFASNetV1SE.pth", env="MINIFASNET_V1SE_MODEL_PATH")

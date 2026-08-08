@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { ShieldCheck, Sliders, Server, UploadCloud } from 'lucide-react';
 import { BackendConfig } from '@/types';
+import { getApiBaseUrl } from '@/lib/api';
 
 interface HeaderProps {
   config: BackendConfig | null;
@@ -64,7 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Master Admin Portal Link (FastAPI) */}
           <a
-            href="http://127.0.0.1:8000/master/login"
+            href={`${getApiBaseUrl()}/master/login`}
             target="_blank"
             rel="noreferrer"
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 font-semibold text-xs transition border border-purple-500/30"

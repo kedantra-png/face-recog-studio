@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 from qdrant_client.http import models as rest_models
 from src.pipeline.config import settings
 from src.pipeline.services.security_service import security_service
-from src.pipeline.services.anti_spoof_service import anti_spoof_service
+from src.pipeline.services.anti_spoof_service import anti_spoof_service, CropImage
 from src.pipeline.services.face_alignment_service import face_alignment_service
 from src.pipeline.services.embedding_service import embedding_service
 from src.pipeline.services.confidence_service import confidence_service
@@ -73,20 +73,43 @@ def cv2_to_b64(img: np.ndarray) -> str:
         return ""
 
 
-DEBUG_DIR = os.path.join(os.getcwd(), "debug_output")
+DEBUG_DIR = os.path.join(os.getcwd(), "debug")
 
 
-def save_debug_image(session_id: str, stage_name: str, img: np.ndarray):
-    """Saves pipeline stage image frames to debug_output directory for inspection."""
+def reset_debug_dir():
+    """Clears debug image files from previous request while appending logs continuously to pipeline_logs.txt."""
+    try:
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        for fname in os.listdir(DEBUG_DIR):
+            if fname.endswith(".jpg"):
+                fpath = os.path.join(DEBUG_DIR, fname)
+                if os.path.isfile(fpath):
+                    os.remove(fpath)
+    except Exception as e:
+        logger.warning(f"Error resetting debug images: {e}")
+
+
+def save_debug_image(stage_name: str, img: np.ndarray):
+    """Saves pipeline stage image frames to debug directory for step-by-step inspection."""
     if img is None or img.size == 0:
         return
     try:
-        sess_dir = os.path.join(DEBUG_DIR, session_id)
-        os.makedirs(sess_dir, exist_ok=True)
-        filename = f"{int(time.time() * 1000)}_{stage_name}.jpg"
-        cv2.imwrite(os.path.join(sess_dir, filename), img)
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        filename = f"{stage_name}.jpg"
+        cv2.imwrite(os.path.join(DEBUG_DIR, filename), img)
     except Exception as e:
         logger.warning(f"Failed to save debug image for stage {stage_name}: {e}")
+
+
+def write_debug_log(log_text: str):
+    """Appends log text to debug/pipeline_logs.txt file."""
+    try:
+        os.makedirs(DEBUG_DIR, exist_ok=True)
+        log_file = os.path.join(DEBUG_DIR, "pipeline_logs.txt")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(log_text + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write to debug log file: {e}")
 
 
 def clean_json_types(obj: Any) -> Any:
@@ -239,6 +262,9 @@ async def verify_recognition(request: Request):
 
     await ws_manager.send_recognition_progress(session_id, "VALIDATING", "Validating frame structure & security payload")
 
+    # Reset debug folder to hold only the latest processed request's images
+    reset_debug_dir()
+
     # -----------------------------------------------------------------------------------------
     # STEP 1: Decode Frames & Frame Quality Filtering
     # -----------------------------------------------------------------------------------------
@@ -267,6 +293,10 @@ async def verify_recognition(request: Request):
             "top_matches": []
         }
 
+    # Debug Step 1: Save decoded input frames
+    for idx, frame in enumerate(decoded_frames):
+        save_debug_image(f"step1_input_frame_{idx}", frame)
+
     t_step1_ms = round((time.time() - t_step1_start) * 1000, 2)
 
     # -----------------------------------------------------------------------------------------
@@ -290,6 +320,14 @@ async def verify_recognition(request: Request):
             candidate_landmarks.append(best_f.get("landmarks"))
             q_score = frame_qualities[img_idx].get("score", 0.80) if img_idx < len(frame_qualities) else 0.80
             candidate_scores.append(best_f.get("confidence", 0.90) * 0.5 + q_score * 0.5)
+
+            # Debug Step 2: Save frame with detected bounding box overlay
+            vis_frame = frame.copy()
+            bbox = best_f.get("bbox")
+            if bbox:
+                x, y, w, h = bbox[:4]
+                cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            save_debug_image(f"step2_detected_bbox_frame_{img_idx}", vis_frame)
         else:
             detected_faces_per_frame.append(None)
             candidate_bboxes.append(None)
@@ -339,7 +377,17 @@ async def verify_recognition(request: Request):
     img_qual = frame_qualities[best_frame_idx] if best_frame_idx < len(frame_qualities) else quality_evaluator.evaluate_image_quality(primary_frame)
 
     aligned_crop = face_alignment_service.align_and_normalize(primary_frame, primary_landmarks)
-    save_debug_image(session_id, "stage4_aligned_face", aligned_crop)
+    # Debug Step 3: Save aligned primary face crop
+    save_debug_image("step3_aligned_primary_face", aligned_crop)
+
+    # Debug Step 4: Save MiniFASNet multi-scale crops
+    for idx, (f, b) in enumerate(zip(selected_frames, selected_bboxes)):
+        if f is not None and b is not None:
+            c_v1 = CropImage.crop(f, b, scale=4.0, out_w=80, out_h=80)
+            c_v2 = CropImage.crop(f, b, scale=2.7, out_w=80, out_h=80)
+            save_debug_image(f"step4_minifasnet_v1se_scale4.0_frame_{idx}", c_v1)
+            save_debug_image(f"step4_minifasnet_v2_scale2.7_frame_{idx}", c_v2)
+
     detected_face_b64 = cv2_to_b64(aligned_crop)
     t_step4_ms = round((time.time() - t_step4_start) * 1000, 2)
 
@@ -357,7 +405,8 @@ async def verify_recognition(request: Request):
         selected_frames,
         face_bboxes=selected_bboxes,
         motion_analysis=motion_res,
-        quality_scores=[candidate_scores[i] for i in ranked_indices]
+        quality_scores=[candidate_scores[i] for i in ranked_indices],
+        landmarks_list=[candidate_landmarks[i] for i in ranked_indices]
     )
     t_step5_ms = round((time.time() - t_step5_start) * 1000, 2)
 
@@ -399,16 +448,21 @@ async def verify_recognition(request: Request):
 
         await ws_manager.send_recognition_progress(session_id, ws_status, msg)
 
-        print(f"\n==================== [LIVENESS-FIRST PIPELINE GATE] ====================")
-        print(f"[STEP 1/6] QUALITY FILTERING       : Handled in {t_step1_ms:.2f}ms ({len(decoded_frames)} frame(s) decoded)")
-        print(f"[STEP 2/6] SCRFD FACE DETECTION    : Handled in {t_step2_ms:.2f}ms")
-        print(f"[STEP 3/6] LANDMARK MOTION ANALYSIS: Handled in {t_step3_ms:.2f}ms (is_rigid={motion_res.get('is_rigid_replay')})")
-        print(f"[STEP 4/6] BEST FRAMES SELECTION   : Handled in {t_step4_ms:.2f}ms (selected top {len(selected_frames)} frames)")
-        print(f"[STEP 5/6] LANDMARK LIVENESS ENGINE: Handled in {t_step5_ms:.2f}ms (real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)")
-        print(f"[STEP 6/6] LIVENESS VERDICT GATE   : DECISION = {liveness_decision} (Challenge={challenge_action}) -> ArcFace Embedding & Qdrant Search Guarded")
-        print(f"----------------------------------------------------------------------------------")
-        print(f"[PIPELINE GATE RESULT] Total Latency: {total_latency_ms:.2f}ms | Status: {rec_status}")
-        print(f"==================================================================================\n")
+        gate_log = [
+            "\n==================== [LIVENESS-FIRST PIPELINE GATE] ====================",
+            f"[STEP 1/6] QUALITY FILTERING       : Handled in {t_step1_ms:.2f}ms ({len(decoded_frames)} frame(s) decoded)",
+            f"[STEP 2/6] SCRFD FACE DETECTION    : Handled in {t_step2_ms:.2f}ms",
+            f"[STEP 3/6] LANDMARK MOTION ANALYSIS: Handled in {t_step3_ms:.2f}ms (is_rigid={motion_res.get('is_rigid_replay')})",
+            f"[STEP 4/6] BEST FRAMES SELECTION   : Handled in {t_step4_ms:.2f}ms (selected top {len(selected_frames)} frames)",
+            f"[STEP 5/6] LANDMARK LIVENESS ENGINE: Handled in {t_step5_ms:.2f}ms (real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)",
+            f"[STEP 6/6] LIVENESS VERDICT GATE   : DECISION = {liveness_decision} (Challenge={challenge_action}) -> ArcFace Embedding & Qdrant Search Guarded",
+            "----------------------------------------------------------------------------------",
+            f"[PIPELINE GATE RESULT] Total Latency: {total_latency_ms:.2f}ms | Status: {rec_status}",
+            "==================================================================================\n"
+        ]
+        gate_log_text = "\n".join(gate_log)
+        print(gate_log_text)
+        write_debug_log(gate_log_text)
 
         response_data = {
             "success": True,

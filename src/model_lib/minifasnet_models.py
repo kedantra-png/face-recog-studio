@@ -83,7 +83,7 @@ class Multi_Depth_Wise(nn.Module):
 
 
 class ResidualSE(nn.Module):
-    def __init__(self, c1: Tuple[int, int], c2: Tuple[int, int], c3: Tuple[int, int], num_squeeze: int = 16, residual: bool = False, kernel: Tuple[int, int] = (3, 3), stride: Tuple[int, int] = (2, 2), padding: Tuple[int, int] = (1, 1), groups: int = 1):
+    def __init__(self, c1: Tuple[int, int], c2: Tuple[int, int], c3: Tuple[int, int], num_squeeze: int = 4, residual: bool = False, kernel: Tuple[int, int] = (3, 3), stride: Tuple[int, int] = (2, 2), padding: Tuple[int, int] = (1, 1), groups: int = 1):
         super(ResidualSE, self).__init__()
         c1_in, c1_out = c1
         c2_in, c2_out = c2
@@ -91,13 +91,12 @@ class ResidualSE(nn.Module):
         self.conv = Conv_block(c1_in, out_c=c1_out, kernel=(1, 1), padding=(0, 0), stride=(1, 1))
         self.conv_dw = Conv_block(c2_in, c2_out, groups=c2_in, kernel=kernel, padding=padding, stride=stride)
         self.project = Linear_block(c3_in, c3_out, kernel=(1, 1), padding=(0, 0), stride=(1, 1))
-        
-        # Squeeze and Excitation layer naming matching Silent-Face V1SE checkpoint
+
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.se_fc1 = nn.Linear(c3_out, c3_out // num_squeeze, bias=False)
-        self.se_bn1 = nn.BatchNorm1d(c3_out // num_squeeze)
-        self.se_fc2 = nn.Linear(c3_out // num_squeeze, c3_out, bias=False)
-        self.se_bn2 = nn.BatchNorm1d(c3_out)
+        self.se_fc1 = nn.Conv2d(c3_out, c3_out // num_squeeze, kernel_size=(1, 1), bias=False)
+        self.se_bn1 = nn.BatchNorm2d(c3_out // num_squeeze)
+        self.se_fc2 = nn.Conv2d(c3_out // num_squeeze, c3_out, kernel_size=(1, 1), bias=False)
+        self.se_bn2 = nn.BatchNorm2d(c3_out)
         self.residual = residual
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -106,11 +105,10 @@ class ResidualSE(nn.Module):
         x = self.conv_dw(x)
         x = self.project(x)
 
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
+        y = self.avg_pool(x)
         y = F.relu(self.se_bn1(self.se_fc1(y)))
-        y = torch.sigmoid(self.se_bn2(self.se_fc2(y))).view(b, c, 1, 1)
-        x = x * y.expand_as(x)
+        y = torch.sigmoid(self.se_bn2(self.se_fc2(y)))
+        x = x * y
 
         if self.residual and short_cut is not None:
             output = short_cut + x
@@ -120,7 +118,7 @@ class ResidualSE(nn.Module):
 
 
 class Multi_ResidualSE(nn.Module):
-    def __init__(self, num_block: int, keep: list, num_squeeze: int = 16, residual: bool = True, kernel: Tuple[int, int] = (3, 3), stride: Tuple[int, int] = (1, 1), padding: Tuple[int, int] = (1, 1), groups: int = 1):
+    def __init__(self, num_block: int, keep: list, num_squeeze: int = 4, residual: bool = True, kernel: Tuple[int, int] = (3, 3), stride: Tuple[int, int] = (1, 1), padding: Tuple[int, int] = (1, 1), groups: int = 1):
         super(Multi_ResidualSE, self).__init__()
         modules = []
         for i in range(num_block):
@@ -209,13 +207,13 @@ class MiniFASNetSE(nn.Module):
         self.conv2_dw = Conv_block(keep[0], keep[1], kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[0])
 
         self.conv_23 = Depth_Wise((keep[1], keep[2]), (keep[2], keep[3]), (keep[3], keep[4]), kernel=(3, 3), stride=(2, 2), padding=(1, 1), groups=keep[3])
-        self.conv_3 = Multi_ResidualSE(4, keep[4:17], residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[6])
+        self.conv_3 = Multi_ResidualSE(4, keep[4:17], num_squeeze=4, residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[6])
         self.conv_34 = Depth_Wise((keep[16], keep[17]), (keep[17], keep[18]), (keep[18], keep[19]), kernel=(3, 3), stride=(2, 2), padding=(1, 1), groups=keep[18])
-        self.conv_4 = Multi_ResidualSE(6, keep[19:38], residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[21])
+        self.conv_4 = Multi_ResidualSE(6, keep[19:38], num_squeeze=4, residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[21])
 
         self.conv_45 = Depth_Wise((keep[37], keep[38]), (keep[38], keep[39]), (keep[39], keep[40]), kernel=(3, 3), stride=(2, 2), padding=(1, 1), groups=keep[39])
-        self.conv_5 = Multi_ResidualSE(2, keep[40:47], residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[42])
-        self.conv_6_sep = Conv_block(keep[46], keep[47], kernel=conv6_kernel, stride=(1, 1), padding=(0, 0), groups=keep[46])
+        self.conv_5 = Multi_ResidualSE(2, keep[40:47], num_squeeze=4, residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[42])
+        self.conv_6_sep = Conv_block(keep[46], keep[47], kernel=(1, 1), stride=(1, 1), padding=(0, 0))
         self.conv_6_flatten = Flatten()
 
         self.linear = nn.Linear(keep[47], embedding_size, bias=False)
@@ -233,6 +231,7 @@ class MiniFASNetSE(nn.Module):
         x = self.conv_45(x)
         x = self.conv_5(x)
         x = self.conv_6_sep(x)
+        x = F.adaptive_avg_pool2d(x, (1, 1))
         x = self.conv_6_flatten(x)
 
         x = self.linear(x)

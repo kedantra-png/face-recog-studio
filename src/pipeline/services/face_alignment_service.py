@@ -51,6 +51,10 @@ class FaceAlignmentService:
         """
         try:
             src = np.array(landmarks, dtype=np.float32)
+            if len(src) >= 106:
+                src = src[[36, 45, 54, 48, 90 if len(src) > 90 else 54]]
+            elif len(src) > 5:
+                src = src[:5]
             dst = ARC_FACE_5POINT_TEMPLATE.copy()
 
             M = self._umeyama(src, dst, estimate_scale=True)
