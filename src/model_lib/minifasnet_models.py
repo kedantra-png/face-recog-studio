@@ -170,13 +170,14 @@ class MiniFASNet(nn.Module):
 
         self.conv_45 = Depth_Wise((keep[37], keep[38]), (keep[38], keep[39]), (keep[39], keep[40]), kernel=(3, 3), stride=(2, 2), padding=(1, 1), groups=keep[39])
         self.conv_5 = Multi_Depth_Wise(2, keep[40:47], residual=True, kernel=(3, 3), stride=(1, 1), padding=(1, 1), groups=keep[42])
-        self.conv_6_dw = Linear_block(keep[46], keep[47], kernel=conv6_kernel, stride=(1, 1), padding=(0, 0), groups=keep[46])
+        self.conv_6_sep = Conv_block(keep[46], keep[47], kernel=(1, 1), stride=(1, 1), padding=(0, 0))
+        self.conv_6_dw = Linear_block(keep[47], keep[47], kernel=conv6_kernel, stride=(1, 1), padding=(0, 0), groups=keep[47])
         self.conv_6_flatten = Flatten()
 
         self.linear = nn.Linear(keep[47], embedding_size, bias=False)
         self.bn = nn.BatchNorm1d(embedding_size)
         self.drop = nn.Dropout(p=drop_p)
-        self.prob = nn.Linear(embedding_size, num_classes, bias=True)
+        self.prob = nn.Linear(embedding_size, num_classes, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
@@ -187,6 +188,7 @@ class MiniFASNet(nn.Module):
         x = self.conv_4(x)
         x = self.conv_45(x)
         x = self.conv_5(x)
+        x = self.conv_6_sep(x)
         x = self.conv_6_dw(x)
         x = self.conv_6_flatten(x)
 

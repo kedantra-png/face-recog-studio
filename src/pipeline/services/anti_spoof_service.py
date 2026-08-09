@@ -34,6 +34,7 @@ from typing import Dict, Any, Tuple, Optional, List
 from src.pipeline.config import settings
 from src.model_lib.minifasnet_models import MiniFASNetV1SE, MiniFASNetV2
 from src.pipeline.services.optical_flow_service import optical_flow_service
+from src.pipeline.services.forensic_logger import forensic_logger
 
 logger = logging.getLogger("pipeline.anti_spoof")
 
@@ -182,13 +183,10 @@ class AntiSpoofService:
                 self.v2_model = MiniFASNetV2(conv6_kernel=(5, 5), num_classes=3, img_channel=3)
                 state_dict = torch.load(v2_path, map_location='cpu')
                 cleaned_state = {k.replace('module.', ''): v for k, v in state_dict.items()}
-                try:
-                    self.v2_model.load_state_dict(cleaned_state, strict=True)
-                except Exception:
-                    self.v2_model.load_state_dict(cleaned_state, strict=False)
+                self.v2_model.load_state_dict(cleaned_state, strict=True)
                 self.v2_model.eval()
                 print(f"[MODEL LOAD SUCCESS] MiniFASNetV2 loaded strictly from '{v2_path}'.")
-                logger.info(f"MiniFASNetV2 loaded successfully from '{v2_path}'.")
+                logger.info(f"MiniFASNetV2 loaded strictly from '{v2_path}'.")
             else:
                 print(f"[MODEL LOAD ERROR] CRITICAL: MiniFASNetV2 weight file not found at '{v2_path}'.")
                 logger.error(f"CRITICAL: MiniFASNetV2 weight file not found at '{v2_path}'.")
@@ -196,13 +194,6 @@ class AntiSpoofService:
             print(f"[MODEL LOAD FAILED] MiniFASNetV2 error: {e}")
             logger.error(f"Failed to load MiniFASNetV2 model: {e}")
             self.v2_model = None
-
-        # Initialize TinyLiveness ONNX/PyTorch secondary verification model
-        try:
-            tiny_path = _resolve_model_path(settings.TINY_LIVENESS_MODEL_PATH)
-            tiny_liveness_model.load_model(tiny_path)
-        except Exception as e:
-            logger.warning(f"Failed to initialize TinyLiveness: {e}")
 
         self._validate_official_implementation()
         self.is_loaded = True
@@ -455,15 +446,55 @@ class AntiSpoofService:
             "=======================================================================================\n"
         ])
 
-        log_text = "\n".join(log_lines)
-        print(log_text)
+        # Generate Pin-to-Pin Forensic Diagnostic Report (Sections A -> AJ)
         try:
+            fusion_breakdown = {
+                "v1se_score": avg_v1se,
+                "v2_score": avg_v2,
+                "quality_score": avg_quality_score
+            }
+            step_latencies = {
+                "total_latency_ms": total_latency
+            }
+            final_res = {
+                "liveness_decision": final_decision,
+                "real_confidence": real_confidence,
+                "spoof_confidence": spoof_confidence
+            }
+            quality_eval_list = [{"quality_score": q, "blur_variance": 150.0} for q in quality_scores] if quality_scores else [{"quality_score": avg_quality_score, "blur_variance": 150.0}]
+            forensic_report = forensic_logger.generate_forensic_report(
+                session_id=f"sess_{int(time.time()*1000)}",
+                request_id=f"req_{int(time.time()*1000)}",
+                decoded_frames=frames,
+                raw_payload_bytes=None,
+                candidate_bboxes=face_bboxes or [],
+                candidate_landmarks=landmarks_list or [info.get("landmarks") for info in per_frame_details if "landmarks" in info],
+                v1se_logits_list=v1se_logits_list,
+                v2_logits_list=v2_logits_list,
+                v1se_real_probs=v1se_real_probs,
+                v2_real_probs=v2_real_probs,
+                per_frame_details=per_frame_details,
+                quality_evals=quality_eval_list,
+                motion_analysis_res={
+                    "landmark_motion_score": landmark_motion_score,
+                    "motion_uniformity_score": motion_uniformity_score
+                },
+                optical_flow_score=optical_flow_score,
+                optical_flow_details=flow_res if isinstance(flow_res, dict) else {},
+                pose_analysis_res={"pose_stability_score": pose_stability},
+                temporal_consistency_score=temporal_consistency_score,
+                fusion_breakdown=fusion_breakdown,
+                step_latencies=step_latencies,
+                final_decision_res=final_res
+            )
+
+            print(forensic_report)
             debug_file = os.path.join(os.getcwd(), "debug", "pipeline_logs.txt")
             os.makedirs(os.path.dirname(debug_file), exist_ok=True)
             with open(debug_file, "a", encoding="utf-8") as f:
-                f.write(log_text + "\n")
-        except Exception:
-            pass
+                f.write(forensic_report + "\n")
+        except Exception as e:
+            logger.warning(f"Error generating forensic diagnostic report: {e}", exc_info=True)
 
         logger.info(f"AntiSpoof Verification: verdict={final_decision}, real_conf={real_confidence*100:.1f}%, label={pred_label}")
 

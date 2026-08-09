@@ -638,21 +638,26 @@ async def verify_recognition(request: Request):
     total_latency_ms = round((time.time() - start_time) * 1000, 2)
     intelligent_scheduler.register_recognition_complete(total_latency_ms)
 
-    print(f"\n==================== [LIVENESS-FIRST RECOGNITION COMPLETE PIN-TO-PIN LOG] ====================")
-    print(f"[SEARCH SESSION] ID: {session_id} | Client IP: {client_ip} | Candidate Frames: {len(decoded_frames)}")
-    print(f"------------------------------------------------------------------------------------------------")
-    print(f"[STEP 1/9] QUALITY FILTERING       : Handled in {t_step1_ms:.2f}ms ({len(decoded_frames)} frame(s) decoded)")
-    print(f"[STEP 2/9] SCRFD FACE DETECTION    : Handled in {t_step2_ms:.2f}ms")
-    print(f"[STEP 3/9] LANDMARK MOTION ANALYSIS: Handled in {t_step3_ms:.2f}ms (is_rigid={motion_res.get('is_rigid_replay')})")
-    print(f"[STEP 4/9] BEST FRAMES SELECTION   : Handled in {t_step4_ms:.2f}ms (top {len(selected_frames)} frames)")
-    print(f"[STEP 5/9] LANDMARK LIVENESS ENGINE: Handled in {t_step5_ms:.2f}ms (real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)")
-    print(f"[STEP 6/9] LIVENESS VERDICT GATE   : DECISION = PASS -> Proceeding to ArcFace & Qdrant")
-    print(f"[STEP 7/9] INSIGHTFACE EMBEDDING   : Handled in {t_step7_ms:.2f}ms (512-d L2 ArcFace vector)")
-    print(f"[STEP 8/9] QDRANT VECTOR SEARCH    : Handled in {t_step8_ms:.2f}ms ({len(qdrant_matches)} hits)")
-    print(f"[STEP 9/9] CONFIDENCE RE-RANKING   : Handled in {t_step9_ms:.2f}ms (overall_conf={final_result['overall_confidence']}%)")
-    print(f"------------------------------------------------------------------------------------------------")
-    print(f"[PIPELINE COMPLETE] Total Latency: {total_latency_ms:.2f}ms | Status: {final_result['recognition_status']} | Match: {final_result.get('person_id') or 'NONE'}")
-    print(f"================================================================================================\n")
+    complete_log_lines = [
+        "\n==================== [LIVENESS-FIRST RECOGNITION COMPLETE PIN-TO-PIN LOG] ====================",
+        f"[SEARCH SESSION] ID: {session_id} | Client IP: {client_ip} | Candidate Frames: {len(decoded_frames)}",
+        "------------------------------------------------------------------------------------------------",
+        f"[STEP 1/9] QUALITY FILTERING       : Handled in {t_step1_ms:.2f}ms ({len(decoded_frames)} frame(s) decoded)",
+        f"[STEP 2/9] SCRFD FACE DETECTION    : Handled in {t_step2_ms:.2f}ms",
+        f"[STEP 3/9] LANDMARK MOTION ANALYSIS: Handled in {t_step3_ms:.2f}ms (is_rigid={motion_res.get('is_rigid_replay')})",
+        f"[STEP 4/9] BEST FRAMES SELECTION   : Handled in {t_step4_ms:.2f}ms (top {len(selected_frames)} frames)",
+        f"[STEP 5/9] LANDMARK LIVENESS ENGINE: Handled in {t_step5_ms:.2f}ms (real_prob={anti_spoof_res.get('real_confidence', 0)*100:.1f}%)",
+        f"[STEP 6/9] LIVENESS VERDICT GATE   : DECISION = PASS -> Proceeding to ArcFace & Qdrant",
+        f"[STEP 7/9] INSIGHTFACE EMBEDDING   : Handled in {t_step7_ms:.2f}ms (512-d L2 ArcFace vector)",
+        f"[STEP 8/9] QDRANT VECTOR SEARCH    : Handled in {t_step8_ms:.2f}ms ({len(qdrant_matches)} hits)",
+        f"[STEP 9/9] CONFIDENCE RE-RANKING   : Handled in {t_step9_ms:.2f}ms (overall_conf={final_result['overall_confidence']}%)",
+        "------------------------------------------------------------------------------------------------",
+        f"[PIPELINE COMPLETE] Total Latency: {total_latency_ms:.2f}ms | Status: {final_result['recognition_status']} | Match: {final_result.get('person_id') or 'NONE'}",
+        "================================================================================================\n"
+    ]
+    complete_log_text = "\n".join(complete_log_lines)
+    print(complete_log_text)
+    write_debug_log(complete_log_text)
 
     latency_breakdown = {
         "quality_ms": t_step1_ms,
