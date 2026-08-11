@@ -91,6 +91,20 @@ class PipelineConfig(BaseSettings):
     MINIFASNET_V2_MODEL_PATH: str = Field(default="resources/anti_spoof_models/2.7_80x80_MiniFASNetV2.pth", env="MINIFASNET_V2_MODEL_PATH")
     TINY_LIVENESS_MODEL_PATH: str = Field(default="resources/anti_spoof_models/tiny_liveness.onnx", env="TINY_LIVENESS_MODEL_PATH")
 
+    # Simple, Globally Understandable Quality Guidance Messages
+    MSG_LOW_LIGHT: str = Field(default="Please move to a brighter area.", env="MSG_LOW_LIGHT")
+    MSG_TOO_FAR: str = Field(default="Please move closer to the camera.", env="MSG_TOO_FAR")
+    MSG_TOO_CLOSE: str = Field(default="Please step back slightly.", env="MSG_TOO_CLOSE")
+    MSG_OFF_CENTER: str = Field(default="Please center your face in the frame.", env="MSG_OFF_CENTER")
+    MSG_BLURRY: str = Field(default="Please hold steady.", env="MSG_BLURRY")
+
+    # Lightweight Quality Thresholds (O(1) Evaluation)
+    MIN_FACE_AREA_RATIO: float = Field(default=0.05, env="MIN_FACE_AREA_RATIO")
+    MAX_FACE_AREA_RATIO: float = Field(default=0.45, env="MAX_FACE_AREA_RATIO")
+    MAX_UNDEREXPOSURE_RATIO: float = Field(default=0.25, env="MAX_UNDEREXPOSURE_RATIO")
+    MIN_BRIGHTNESS_MEAN: float = Field(default=40.0, env="MIN_BRIGHTNESS_MEAN")
+    MAX_CENTER_OFFSET_PX: int = Field(default=100, env="MAX_CENTER_OFFSET_PX")
+
 
     # Intelligent Resource Scheduler Settings (VPS 2 vCPU / 4 GB RAM)
     TARGET_RECOGNITION_LATENCY_MS: float = Field(default=800.0, env="TARGET_RECOGNITION_LATENCY_MS")

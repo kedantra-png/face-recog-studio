@@ -227,13 +227,60 @@ class AntiSpoofService:
                 logger.warning(f"Error in MiniFASNet model forward pass: {e}")
                 return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([0.33, 0.34, 0.33], dtype=np.float32)
 
+    def _evaluate_lightweight_guidance(self, frame: np.ndarray, bbox: Optional[List[int]]) -> Optional[str]:
+        """
+        Lightweight O(1) environmental & positioning quality evaluation.
+        Returns a simple, globally understandable user guidance message if quality is non-optimal,
+        or None if conditions are optimal.
+        """
+        if frame is None or frame.size == 0:
+            return None
+
+        h, w, _ = frame.shape
+        if h == 0 or w == 0:
+            return None
+
+        # 1. Lighting Check (O(1) brightness / underexposure)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        brightness_mean = float(gray.mean())
+        if brightness_mean < settings.MIN_BRIGHTNESS_MEAN:
+            return settings.MSG_LOW_LIGHT
+
+        underexposed_pixels = int(np.count_nonzero(gray < 20))
+        underexposure_ratio = float(underexposed_pixels) / float(gray.size)
+        if underexposure_ratio > settings.MAX_UNDEREXPOSURE_RATIO:
+            return settings.MSG_LOW_LIGHT
+
+        # 2. Distance / Size Check
+        if bbox and len(bbox) >= 4:
+            x, y, bw, bh = bbox[:4]
+            box_area = float(max(1, bw * bh))
+            frame_area = float(w * h)
+            face_ratio = box_area / frame_area
+
+            if face_ratio < settings.MIN_FACE_AREA_RATIO:
+                return settings.MSG_TOO_FAR
+            elif face_ratio > settings.MAX_FACE_AREA_RATIO:
+                return settings.MSG_TOO_CLOSE
+
+            # 3. Frame Position / Centering Check
+            center_x = x + bw / 2.0
+            center_y = y + bh / 2.0
+            offset_x = abs(center_x - w / 2.0)
+            offset_y = abs(center_y - h / 2.0)
+
+            if offset_x > settings.MAX_CENTER_OFFSET_PX or offset_y > settings.MAX_CENTER_OFFSET_PX:
+                return settings.MSG_OFF_CENTER
+
+        return None
+
     def predict_multi_frame(
         self,
         frames: List[np.ndarray],
         face_bboxes: Optional[List[Optional[List[int]]]] = None,
         motion_analysis: Optional[Dict[str, Any]] = None,
         quality_scores: Optional[List[float]] = None,
-        landmarks_list: Optional[List[Optional[List[List[float]]]]] = None
+        landmarks_list: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes MiniFASNet V1SE and V2 ensemble predictions, Sparse Lucas-Kanade optical flow,
@@ -380,11 +427,15 @@ class AntiSpoofService:
             final_fusion_score = weighted_score
             status_msg = f"Presentation spoof attack detected (Silent-Face label={pred_label}, real_prob={model_real_confidence*100:.1f}%). Verification rejected."
 
+        guidance_msg = self._evaluate_lightweight_guidance(eval_frames[0], face_bboxes[0] if (face_bboxes and len(face_bboxes) > 0) else None)
+        is_real = bool(final_decision == "PASS")
+        if not is_real and guidance_msg:
+            status_msg = f"{guidance_msg} ({status_msg})"
+
         initial_decision = final_decision
         tiny_liveness_executed = False
         tiny_liveness_score = None
 
-        is_real = bool(final_decision == "PASS")
         real_confidence = round(model_real_confidence if is_real else min(model_real_confidence, final_fusion_score), 4)
         spoof_confidence = round(1.0 - real_confidence, 4)
         total_latency = round((time.time() - start_time) * 1000, 2)
@@ -517,6 +568,7 @@ class AntiSpoofService:
             "quality_score": round(avg_quality_score, 4),
             "tiny_liveness_executed": tiny_liveness_executed,
             "tiny_liveness_score": tiny_liveness_score,
+            "user_guidance": guidance_msg,
             "latency_ms": total_latency,
             "message": status_msg
         }

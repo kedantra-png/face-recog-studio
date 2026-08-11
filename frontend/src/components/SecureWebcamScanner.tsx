@@ -174,18 +174,18 @@ export const SecureWebcamScanner: React.FC<SecureWebcamScannerProps> = ({
           let usable = true;
           let message = 'Hold still — Auto capturing best frames';
 
-          if (brightness < 35) {
+          if (brightness < 40) {
             usable = false;
-            message = 'Lighting too dark — Move to a brighter area';
+            message = 'Please move to a brighter area';
           } else if (brightness > 220) {
             usable = false;
-            message = 'Lighting overexposed — Avoid direct glare';
+            message = 'Please avoid direct glare';
           } else if (blurScore < 15) {
             usable = false;
-            message = 'Image blurry — Please hold camera steady';
+            message = 'Please hold camera steady';
           } else if (motionStability < 40) {
             usable = false;
-            message = 'Motion detected — Keep head completely still';
+            message = 'Please hold still';
           }
 
           const overallScore = Math.round(
